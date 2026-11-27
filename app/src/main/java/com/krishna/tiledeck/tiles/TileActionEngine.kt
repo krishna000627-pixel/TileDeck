@@ -6,7 +6,11 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.content.ComponentName
 import android.content.IntentFilter
+import android.content.pm.LauncherApps
+import android.content.pm.PackageManager
+import android.os.UserManager
 import android.hardware.Sensor
 import android.hardware.SensorManager
 import android.hardware.camera2.CameraManager
@@ -38,7 +42,8 @@ data class TileExecutionResult(
     val active: Boolean,
     val subtitle: String,
     val ok: Boolean = true,
-    val diagnostic: String = "OK"
+    val diagnostic: String = "OK",
+    val launchIntent: Intent? = null
 )
 
 object TileActionEngine {
@@ -183,15 +188,88 @@ object TileActionEngine {
 
     private fun openMotoSecure(context: Context, dryRun: Boolean): TileExecutionResult {
         val pm = context.packageManager
-        val pkg = motoSecurePackages.firstOrNull { runCatching { pm.getPackageInfo(it, 0) }.isSuccess }
-            ?: return TileExecutionResult(false, "Not Installed", false, "Moto Secure package not found on device")
-        val launch = pm.getLaunchIntentForPackage(pkg)
-            ?: return TileExecutionResult(false, "Hidden", false, "Moto Secure ($pkg) has no launcher activity")
-        if (!dryRun) {
-            launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            context.startActivity(launch)
+        val installedMotoPkgs = buildList {
+            motoSecurePackages.forEach { pkg ->
+                if (runCatching { pm.getPackageInfo(pkg, 0) }.isSuccess) add(pkg)
+            }
+            // Also detect any Motorola secure/vault package even if renamed/disguised
+            runCatching {
+                pm.getInstalledPackages(0)
+                    .map { it.packageName }
+                    .filter { it.contains("motorola", true) && (it.contains("secure", true) || it.contains("vault", true) || it.contains("spaces", true)) }
+                    .forEach { if (it !in this) add(it) }
+            }
         }
-        return TileExecutionResult(true, "Synced", true, "OK ($pkg)")
+
+        if (installedMotoPkgs.isEmpty()) {
+            return TileExecutionResult(false, "Idle", false, "Moto Secure package not found on device")
+        }
+
+        // Step 1: Standard launcher intent (works when visible in tray)
+        for (pkg in installedMotoPkgs) {
+            val launch = pm.getLaunchIntentForPackage(pkg)
+            if (launch != null) {
+                launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                if (!dryRun) runCatching { context.startActivity(launch) }
+                return TileExecutionResult(false, "Idle", true, "OK (Launcher: $pkg)", launchIntent = launch)
+            }
+        }
+
+        // Step 2: Hidden from app tray — scan for exported entry activity directly (zero SU needed)
+        val preferredKeywords = listOf("vault", "securefolder", "folder", "main", "home", "entry", "launcher", "splash")
+        for (pkg in installedMotoPkgs) {
+            val info = runCatching { pm.getPackageInfo(pkg, PackageManager.GET_ACTIVITIES) }.getOrNull() ?: continue
+            val exported = info.activities?.filter { it.exported && it.enabled } ?: emptyList()
+            val best = exported.sortedByDescending { act ->
+                val n = act.name.lowercase()
+                preferredKeywords.indexOfFirst { n.contains(it) }.let { if (it >= 0) 100 - it else 0 }
+            }.firstOrNull()
+            if (best != null) {
+                val direct = Intent(Intent.ACTION_MAIN).apply {
+                    component = ComponentName(pkg, best.name)
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                if (!dryRun) runCatching { context.startActivity(direct) }
+                return TileExecutionResult(false, "Idle", true, "OK (Hidden-Tray Exported: ${best.name})", launchIntent = direct)
+            }
+        }
+
+        // Step 3: Check secondary / private / work user profiles via LauncherApps (Android 14/15 Moto Secure)
+        val um = context.getSystemService(Context.USER_SERVICE) as? UserManager
+        val la = context.getSystemService(Context.LAUNCHER_APPS_SERVICE) as? LauncherApps
+        if (um != null && la != null) {
+            for (profile in um.userProfiles) {
+                for (pkg in installedMotoPkgs) {
+                    val acts = runCatching { la.getActivityList(pkg, profile) }.getOrNull().orEmpty()
+                    val first = acts.firstOrNull()
+                    if (first != null) {
+                        if (!dryRun) runCatching { la.startMainActivity(first.componentName, profile, null, null) }
+                        return TileExecutionResult(false, "Idle", true, "OK (Profile Launch: ${first.componentName.className})")
+                    }
+                }
+            }
+        }
+
+        // Step 4: Known Moto Secure explicit action intents
+        val actionCandidates = listOf(
+            "com.motorola.motosecure.action.OPEN_SECURE_FOLDER",
+            "com.motorola.securevault.ACTION_OPEN",
+            "com.motorola.securityhub.ACTION_LAUNCH"
+        )
+        for (act in actionCandidates) {
+            val i = Intent(act).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            if (i.resolveActivity(pm) != null) {
+                if (!dryRun) runCatching { context.startActivity(i) }
+                return TileExecutionResult(false, "Idle", true, "OK (Action: $act)", launchIntent = i)
+            }
+        }
+
+        return TileExecutionResult(
+            false,
+            "Idle",
+            false,
+            "Hidden Moto Secure (${installedMotoPkgs.joinToString()}) has no exported activity; enable Disguised Icon in Moto Secure or open via Moto Secure app"
+        )
     }
 
     private fun checkOrRunA11y(dryRun: Boolean, block: (TileDeckAccessibilityService) -> Pair<Boolean, String>): TileExecutionResult {

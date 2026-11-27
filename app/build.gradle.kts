@@ -30,8 +30,8 @@ android {
         applicationId = "com.krishna.tiledeck"
         minSdk = 26
         targetSdk = 35
-        versionCode = 8
-        versionName = "8.0.0"
+        versionCode = 10
+        versionName = "10.0.0"
     }
 
     signingConfigs {

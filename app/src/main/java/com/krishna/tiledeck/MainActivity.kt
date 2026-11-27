@@ -4,6 +4,7 @@ import android.app.AppOpsManager
 import android.app.NotificationManager
 import android.content.ClipData
 import android.content.ClipboardManager
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
@@ -19,11 +20,14 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.compose.animation.*
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -43,7 +47,10 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -56,6 +63,7 @@ import com.krishna.tiledeck.data.TilePrefs
 import com.krishna.tiledeck.data.TileSpec
 import com.krishna.tiledeck.tiles.TileActionEngine
 import com.krishna.tiledeck.tiles.TileExecutionResult
+import kotlinx.coroutines.launch
 
 sealed interface PageRoute {
     data object Deck : PageRoute
@@ -80,10 +88,18 @@ private fun toImgBitmap(d: Drawable, px: Int = 72): ImageBitmap? = runCatching {
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val startRoute: PageRoute = when (intent?.data?.host) {
-            "applock" -> PageRoute.AppLock
-            "permissions" -> PageRoute.Permissions
-            "tester" -> PageRoute.SelfTester
+        val qsComponent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            intent?.getParcelableExtra(Intent.EXTRA_COMPONENT_NAME, ComponentName::class.java)
+        } else {
+            @Suppress("DEPRECATION")
+            intent?.getParcelableExtra(Intent.EXTRA_COMPONENT_NAME)
+        }
+        val qsSpec = qsComponent?.className?.let { TileCatalog.findByServiceClass(it) }
+        val startRoute: PageRoute = when {
+            qsSpec != null -> PageRoute.TileDetail(qsSpec.id)
+            intent?.data?.host == "applock" -> PageRoute.AppLock
+            intent?.data?.host == "permissions" -> PageRoute.Permissions
+            intent?.data?.host == "tester" -> PageRoute.SelfTester
             else -> PageRoute.Deck
         }
 
@@ -195,7 +211,12 @@ private fun TileDeckV8Shell(startRoute: PageRoute, dark: Boolean, onToggleTheme:
                     dark = dark, tick = tick, onToggleTheme = onToggleTheme,
                     onOpenCat = { push(PageRoute.Category(it)) },
                     onOpenTester = { tab(PageRoute.SelfTester) },
-                    onQuickRun = { TileActionEngine.execute(context, it); tick++ }
+                    onQuickRun = { TileActionEngine.execute(context, it); tick++ },
+                    onRemoveFromShade = { spec ->
+                        TilePrefs.setTileEnabledInPanel(context, spec, false)
+                        Toast.makeText(context, "Removed ${spec.name} from shade", Toast.LENGTH_SHORT).show()
+                        tick++
+                    }
                 )
                 is PageRoute.Category -> CategoryPage(
                     catName = route.name, tick = tick, onBack = { pop() },
@@ -250,7 +271,8 @@ private fun DeckHomePage(
     onToggleTheme: () -> Unit,
     onOpenCat: (String) -> Unit,
     onOpenTester: () -> Unit,
-    onQuickRun: (String) -> Unit
+    onQuickRun: (String) -> Unit,
+    onRemoveFromShade: (TileSpec) -> Unit
 ) {
     val context = LocalContext.current
     val enabledTiles = remember(tick) { TileCatalog.allTiles.filter { TilePrefs.isTileEnabledInPanel(context, it) } }
@@ -260,7 +282,7 @@ private fun DeckHomePage(
     ) {
         PageHeader(
             title = "TILEDECK",
-            meta = "v8.0 | 102 DIRECT NON-ROOT TILES",
+            meta = "v10.0 | 102 DIRECT NON-ROOT TILES",
             trailing = {
                 OutlinedButton(onClick = onToggleTheme, shape = RoundedCornerShape(10.dp), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)) {
                     Text(if (dark) "LIGHT" else "DARK", fontSize = 11.sp, fontFamily = FontFamily.Monospace)
@@ -294,31 +316,20 @@ private fun DeckHomePage(
         }
 
         Spacer(Modifier.height(16.dp))
-        Text("ACTIVE IN SHADE", fontSize = 11.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
+        Text("ACTIVE IN SHADE (HOLD 3S TO REMOVE)", fontSize = 11.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
         Spacer(Modifier.height(8.dp))
 
         Row(modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             enabledTiles.forEach { spec ->
                 val active = TilePrefs.isTileActive(context, spec.id)
                 val sub = TilePrefs.getSubtitle(context, spec.id, "Ready")
-                Surface(
-                    shape = RoundedCornerShape(14.dp),
-                    color = if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surface,
-                    border = BorderStroke(1.dp, if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline),
-                    modifier = Modifier.width(136.dp).clickable { onQuickRun(spec.id) }
-                ) {
-                    Column(modifier = Modifier.padding(12.dp)) {
-                        Icon(
-                            painter = painterResource(spec.iconRes),
-                            contentDescription = spec.name,
-                            tint = if (active) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(20.dp)
-                        )
-                        Spacer(Modifier.height(8.dp))
-                        Text(spec.name, fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis, color = if (active) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface)
-                        Text(sub, fontSize = 10.5.sp, fontFamily = FontFamily.Monospace, maxLines = 1, color = if (active) MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.8f) else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
-                    }
-                }
+                Hold3sShadeTile(
+                    spec = spec,
+                    active = active,
+                    sub = sub,
+                    onTap = { onQuickRun(spec.id) },
+                    onHold3sRemove = { onRemoveFromShade(spec) }
+                )
             }
         }
 
@@ -440,7 +451,20 @@ private fun TileDetailPage(tileId: String, tick: Int, onBack: () -> Unit, onChan
                 Spacer(Modifier.height(14.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(onClick = { lastTest = TileActionEngine.execute(context, spec.id, dryRunTest = false); onChanged() }) { Text("Run Now") }
-                    OutlinedButton(onClick = { TilePrefs.setTileEnabledInPanel(context, spec, !enabled); onChanged() }) { Text(if (enabled) "Remove Tile" else "Add to Shade") }
+                    if (!enabled) {
+                        OutlinedButton(onClick = { TilePrefs.setTileEnabledInPanel(context, spec, true); onChanged() }) { Text("Add to Shade") }
+                    }
+                }
+                if (enabled) {
+                    Spacer(Modifier.height(12.dp))
+                    Hold3sRemoveButton(
+                        label = "Hold 3s to Remove from Shade",
+                        onRemoved = {
+                            TilePrefs.setTileEnabledInPanel(context, spec, false)
+                            Toast.makeText(context, "Removed ${spec.name} from shade", Toast.LENGTH_SHORT).show()
+                            onChanged()
+                        }
+                    )
                 }
                 Spacer(Modifier.height(10.dp))
                 Text("State: $sub", fontSize = 12.sp, fontFamily = FontFamily.Monospace, color = MaterialTheme.colorScheme.primary)
@@ -473,10 +497,10 @@ private fun SelfTesterPage(onBack: () -> Unit) {
 
     fun copyFailedReport() {
         val text = if (failed.isEmpty()) {
-            "TileDeck v8.0 Self-Test: ALL ${results.size} tiles PASSED (0 failures)."
+            "TileDeck v10.0 Self-Test: ALL ${results.size} tiles PASSED (0 failures)."
         } else {
             buildString {
-                appendLine("TileDeck v8.0 Failed Tiles (${failed.size}/${results.size}):")
+                appendLine("TileDeck v10.0 Failed Tiles (${failed.size}/${results.size}):")
                 failed.forEach { rec ->
                     appendLine("- ${rec.spec.id} (${rec.spec.name} | ${rec.spec.permissionTier}): ${rec.result.diagnostic}")
                 }
@@ -629,6 +653,151 @@ private fun PermissionsPage(onBack: () -> Unit) {
                         else Button(onClick = { pair.second.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK); runCatching { context.startActivity(pair.second) }; tick++ }) { Text("Grant") }
                     }
                 }
+            }
+        }
+    }
+}
+
+
+@Composable
+private fun Hold3sShadeTile(
+    spec: TileSpec,
+    active: Boolean,
+    sub: String,
+    onTap: () -> Unit,
+    onHold3sRemove: () -> Unit
+) {
+    val progress = remember(spec.id) { Animatable(0f) }
+    val scope = rememberCoroutineScope()
+    val haptic = LocalHapticFeedback.current
+
+    Surface(
+        shape = RoundedCornerShape(14.dp),
+        color = if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surface,
+        border = BorderStroke(
+            1.dp,
+            if (progress.value > 0.02f) Color(0xFFEF4444)
+            else if (active) MaterialTheme.colorScheme.primary
+            else MaterialTheme.colorScheme.outline
+        ),
+        modifier = Modifier
+            .width(140.dp)
+            .pointerInput(spec.id) {
+                detectTapGestures(
+                    onTap = { onTap() },
+                    onPress = {
+                        val job = scope.launch {
+                            progress.snapTo(0f)
+                            progress.animateTo(1f, tween(durationMillis = 3000, easing = LinearEasing))
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            onHold3sRemove()
+                            progress.snapTo(0f)
+                        }
+                        tryAwaitRelease()
+                        if (job.isActive) {
+                            job.cancel()
+                            scope.launch { progress.animateTo(0f, tween(150)) }
+                        }
+                    }
+                )
+            }
+    ) {
+        Column {
+            Column(modifier = Modifier.padding(12.dp)) {
+                Icon(
+                    painter = painterResource(spec.iconRes),
+                    contentDescription = spec.name,
+                    tint = if (active) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(20.dp)
+                )
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    spec.name,
+                    fontSize = 12.5.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    color = if (active) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface
+                )
+                Text(
+                    if (progress.value > 0.05f) "Removing ${(3.0f * (1f - progress.value)).toInt() + 1}s..." else sub,
+                    fontSize = 10.5.sp,
+                    fontFamily = FontFamily.Monospace,
+                    maxLines = 1,
+                    color = if (progress.value > 0.05f) Color(0xFFEF4444)
+                    else if (active) MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.8f)
+                    else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                )
+            }
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(3.dp)
+                    .background(Color.Transparent)
+            ) {
+                if (progress.value > 0f) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxHeight()
+                            .fillMaxWidth(progress.value)
+                            .background(Color(0xFFEF4444))
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun Hold3sRemoveButton(label: String, onRemoved: () -> Unit) {
+    val progress = remember { Animatable(0f) }
+    val scope = rememberCoroutineScope()
+    val haptic = LocalHapticFeedback.current
+
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = Color(0x1AEF4444),
+        border = BorderStroke(1.dp, Color(0xFFEF4444).copy(alpha = 0.6f)),
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(44.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .pointerInput(Unit) {
+                detectTapGestures(
+                    onPress = {
+                        val job = scope.launch {
+                            progress.snapTo(0f)
+                            progress.animateTo(1f, tween(durationMillis = 3000, easing = LinearEasing))
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            onRemoved()
+                            progress.snapTo(0f)
+                        }
+                        tryAwaitRelease()
+                        if (job.isActive) {
+                            job.cancel()
+                            scope.launch { progress.animateTo(0f, tween(150)) }
+                        }
+                    }
+                )
+            }
+    ) {
+        Box(modifier = Modifier.fillMaxSize()) {
+            if (progress.value > 0f) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxHeight()
+                        .fillMaxWidth(progress.value)
+                        .background(Color(0x55EF4444))
+                )
+            }
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text(
+                    text = if (progress.value > 0.05f) "Keep holding (${(3.0f * (1f - progress.value)).toInt() + 1}s)..." else label,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    fontFamily = FontFamily.Monospace,
+                    color = Color(0xFFEF4444)
+                )
             }
         }
     }

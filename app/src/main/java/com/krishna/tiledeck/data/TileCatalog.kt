@@ -124,4 +124,6 @@ object TileCatalog {
     val categories: List<String> = allTiles.map { it.category }.distinct()
     private val byId: Map<String, TileSpec> = allTiles.associateBy { it.id }
     fun findById(id: String): TileSpec? = byId[id]
+    fun findByServiceClass(simpleOrFullName: String): TileSpec? =
+        allTiles.firstOrNull { simpleOrFullName.endsWith(".${it.serviceClassName}") || simpleOrFullName == it.serviceClassName }
 }
