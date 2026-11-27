@@ -30,8 +30,8 @@ android {
         applicationId = "com.krishna.tiledeck"
         minSdk = 26
         targetSdk = 35
-        versionCode = 10
-        versionName = "10.0.0"
+        versionCode = 11
+        versionName = "11.0.0"
     }
 
     signingConfigs {
@@ -80,4 +80,6 @@ dependencies {
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-extended")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
+    implementation("androidx.biometric:biometric:1.1.0")
+    implementation("androidx.fragment:fragment-ktx:1.8.5")
 }

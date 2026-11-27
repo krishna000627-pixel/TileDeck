@@ -58,7 +58,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.krishna.tiledeck.accessibility.TileDeckAccessibilityService
+import com.krishna.tiledeck.data.AppLockFeatures
 import com.krishna.tiledeck.data.TileCatalog
+import com.krishna.tiledeck.ui.AppLockActivity
 import com.krishna.tiledeck.data.TilePrefs
 import com.krishna.tiledeck.data.TileSpec
 import com.krishna.tiledeck.tiles.TileActionEngine
@@ -282,7 +284,7 @@ private fun DeckHomePage(
     ) {
         PageHeader(
             title = "TILEDECK",
-            meta = "v10.0 | 102 DIRECT NON-ROOT TILES",
+            meta = "v11.0 | 102 DIRECT NON-ROOT TILES",
             trailing = {
                 OutlinedButton(onClick = onToggleTheme, shape = RoundedCornerShape(10.dp), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)) {
                     Text(if (dark) "LIGHT" else "DARK", fontSize = 11.sp, fontFamily = FontFamily.Monospace)
@@ -497,10 +499,10 @@ private fun SelfTesterPage(onBack: () -> Unit) {
 
     fun copyFailedReport() {
         val text = if (failed.isEmpty()) {
-            "TileDeck v10.0 Self-Test: ALL ${results.size} tiles PASSED (0 failures)."
+            "TileDeck v11.0 Self-Test: ALL ${results.size} tiles PASSED (0 failures)."
         } else {
             buildString {
-                appendLine("TileDeck v10.0 Failed Tiles (${failed.size}/${results.size}):")
+                appendLine("TileDeck v11.0 Failed Tiles (${failed.size}/${results.size}):")
                 failed.forEach { rec ->
                     appendLine("- ${rec.spec.id} (${rec.spec.name} | ${rec.spec.permissionTier}): ${rec.result.diagnostic}")
                 }
@@ -563,7 +565,9 @@ private fun SelfTesterPage(onBack: () -> Unit) {
 @Composable
 private fun AppLockPage(onBack: () -> Unit) {
     val context = LocalContext.current
+    var subTab by remember { mutableIntStateOf(0) } // 0=Apps, 1=100 Features, 2=Intruder Log
     var q by remember { mutableStateOf("") }
+    var featCat by remember { mutableStateOf("All") }
     var pin by remember { mutableStateOf(TilePrefs.getAppLockPin(context)) }
     var armed by remember { mutableStateOf(TilePrefs.isAppLockArmed(context)) }
     var tick by remember { mutableIntStateOf(0) }
@@ -576,40 +580,128 @@ private fun AppLockPage(onBack: () -> Unit) {
             .filter { it.pkg != context.packageName }
             .sortedBy { it.label.lowercase() }
     }
-    val filtered = remember(q, apps) { apps.filter { q.isBlank() || it.label.contains(q, true) || it.pkg.contains(q, true) } }
+    val filteredApps = remember(q, apps) { apps.filter { q.isBlank() || it.label.contains(q, true) || it.pkg.contains(q, true) } }
+    val enabledFeatCount = remember(tick) { AppLockFeatures.enabledCount(context) }
+    val logs = remember(tick) { AppLockFeatures.getIntruderLogs(context) }
+
+    fun launchPreview(cover: String? = null) {
+        val i = Intent(context, AppLockActivity::class.java).apply {
+            putExtra("target_pkg", context.packageName)
+            putExtra("preview_mode", true)
+            if (cover != null) putExtra("force_cover", cover)
+        }
+        context.startActivity(i)
+    }
 
     Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
-        PageHeader(title = "App Lock", meta = "ACCESSIBILITY PIN SHIELD | NON-ROOT", onBack = onBack)
-        Surface(shape = RoundedCornerShape(14.dp), color = MaterialTheme.colorScheme.surface, border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline), modifier = Modifier.fillMaxWidth()) {
-            Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                    Text("Arm App Lock", fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
-                    Switch(checked = armed, onCheckedChange = { armed = it; TilePrefs.setAppLockArmed(context, it) })
-                }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    OutlinedTextField(value = pin, onValueChange = { if (it.length <= 8 && it.all(Char::isDigit)) pin = it }, label = { Text("PIN") }, singleLine = true, modifier = Modifier.weight(1f), shape = RoundedCornerShape(10.dp))
-                    Button(onClick = { TilePrefs.setAppLockPin(context, pin); Toast.makeText(context, "PIN saved", Toast.LENGTH_SHORT).show() }) { Text("Save") }
-                }
-            }
+        PageHeader(
+            title = "App Lock Vault",
+            meta = "$enabledFeatCount / 100 POWER FEATURES | ${AppLockFeatures.activeThemeName(context)}",
+            onBack = onBack
+        )
+
+        // Sub-navigation pills
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FilterChip(selected = subTab == 0, onClick = { subTab = 0 }, label = { Text("Apps", fontSize = 11.5.sp) })
+            FilterChip(selected = subTab == 1, onClick = { subTab = 1 }, label = { Text("100 Features", fontSize = 11.5.sp) })
+            FilterChip(selected = subTab == 2, onClick = { subTab = 2 }, label = { Text("Intruders (${logs.size})", fontSize = 11.5.sp) })
         }
-        Spacer(Modifier.height(10.dp))
-        OutlinedTextField(value = q, onValueChange = { q = it }, placeholder = { Text("Search apps...") }, singleLine = true, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp))
         Spacer(Modifier.height(8.dp))
-        LazyColumn(verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxSize()) {
-            items(filtered, key = { it.pkg }) { app ->
-                val locked = remember(tick) { app.pkg in TilePrefs.getLockedPackages(context) }
-                Surface(shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.surface, border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline), modifier = Modifier.fillMaxWidth()) {
-                    Row(modifier = Modifier.padding(10.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                        Row(modifier = Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
-                            if (app.icon != null) Image(bitmap = app.icon, contentDescription = app.label, modifier = Modifier.size(36.dp).clip(RoundedCornerShape(8.dp)))
-                            else Box(contentAlignment = Alignment.Center, modifier = Modifier.size(36.dp).clip(RoundedCornerShape(8.dp)).background(MaterialTheme.colorScheme.surfaceVariant)) { Icon(Icons.Rounded.Android, contentDescription = null) }
-                            Spacer(Modifier.width(10.dp))
-                            Column {
-                                Text(app.label, fontSize = 13.5.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                Text(app.pkg, fontSize = 10.sp, fontFamily = FontFamily.Monospace, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+
+        when (subTab) {
+            0 -> {
+                Surface(shape = RoundedCornerShape(14.dp), color = MaterialTheme.colorScheme.surface, border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline), modifier = Modifier.fillMaxWidth()) {
+                    Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                            Text("Arm App Lock Shield", fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                            Switch(checked = armed, onCheckedChange = { armed = it; TilePrefs.setAppLockArmed(context, it) })
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                            OutlinedTextField(value = pin, onValueChange = { if (it.length <= 8 && it.all(Char::isDigit)) pin = it }, label = { Text("PIN") }, singleLine = true, modifier = Modifier.weight(1f), shape = RoundedCornerShape(10.dp))
+                            Button(onClick = { TilePrefs.setAppLockPin(context, pin); Toast.makeText(context, "PIN saved", Toast.LENGTH_SHORT).show() }) { Text("Save") }
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
+                            OutlinedButton(onClick = { launchPreview(null) }, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)) { Text("Test Lock UI", fontSize = 11.sp) }
+                            OutlinedButton(onClick = { launchPreview("crash") }, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)) { Text("Test Crash Decoy", fontSize = 11.sp) }
+                            OutlinedButton(onClick = { launchPreview("calc") }, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)) { Text("Test Calc Disguise", fontSize = 11.sp) }
+                        }
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(value = q, onValueChange = { q = it }, placeholder = { Text("Search apps...") }, singleLine = true, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp))
+                Spacer(Modifier.height(8.dp))
+                LazyColumn(verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxSize()) {
+                    items(filteredApps, key = { it.pkg }) { app ->
+                        val locked = remember(tick) { app.pkg in TilePrefs.getLockedPackages(context) }
+                        Surface(shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.surface, border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline), modifier = Modifier.fillMaxWidth()) {
+                            Row(modifier = Modifier.padding(10.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                Row(modifier = Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
+                                    if (app.icon != null) Image(bitmap = app.icon, contentDescription = app.label, modifier = Modifier.size(36.dp).clip(RoundedCornerShape(8.dp)))
+                                    else Box(contentAlignment = Alignment.Center, modifier = Modifier.size(36.dp).clip(RoundedCornerShape(8.dp)).background(MaterialTheme.colorScheme.surfaceVariant)) { Icon(Icons.Rounded.Android, contentDescription = null) }
+                                    Spacer(Modifier.width(10.dp))
+                                    Column {
+                                        Text(app.label, fontSize = 13.5.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                        Text(app.pkg, fontSize = 10.sp, fontFamily = FontFamily.Monospace, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    }
+                                }
+                                Switch(checked = locked, onCheckedChange = { TilePrefs.setPackageLocked(context, app.pkg, it); tick++ })
                             }
                         }
-                        Switch(checked = locked, onCheckedChange = { TilePrefs.setPackageLocked(context, app.pkg, it); tick++ })
+                    }
+                }
+            }
+            1 -> {
+                Row(modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    (listOf("All") + AppLockFeatures.categories).forEach { cat ->
+                        FilterChip(selected = featCat == cat, onClick = { featCat = cat }, label = { Text(cat, fontSize = 11.sp) })
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+                val shownFeats = remember(featCat, tick) {
+                    AppLockFeatures.all.filter { featCat == "All" || it.category == featCat }
+                }
+                LazyColumn(verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxSize()) {
+                    items(shownFeats, key = { it.key }) { feat ->
+                        val on = remember(tick) { AppLockFeatures.isEnabled(context, feat.key) }
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = MaterialTheme.colorScheme.surface,
+                            border = BorderStroke(1.dp, if (on) MaterialTheme.colorScheme.primary.copy(alpha = 0.45f) else MaterialTheme.colorScheme.outline),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(modifier = Modifier.padding(12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text("#${feat.number}  ${feat.title}", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                                    Text(feat.category, fontSize = 10.sp, fontFamily = FontFamily.Monospace, color = MaterialTheme.colorScheme.primary)
+                                    Text(feat.description, fontSize = 11.5.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.68f))
+                                }
+                                Spacer(Modifier.width(8.dp))
+                                Switch(checked = on, onCheckedChange = { AppLockFeatures.setEnabled(context, feat.key, it); tick++ })
+                            }
+                        }
+                    }
+                }
+            }
+            else -> {
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = {
+                        val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                        val txt = if (logs.isEmpty()) "No intruder attempts logged." else logs.joinToString("\n")
+                        cm.setPrimaryClip(ClipData.newPlainText("Intruder Log", txt))
+                        Toast.makeText(context, "Intruder log copied", Toast.LENGTH_SHORT).show()
+                    }, modifier = Modifier.weight(1f)) { Text("Copy Log", fontSize = 12.sp) }
+                    OutlinedButton(onClick = { AppLockFeatures.clearIntruderLogs(context); tick++ }, modifier = Modifier.weight(1f)) { Text("Clear Log", fontSize = 12.sp) }
+                }
+                Spacer(Modifier.height(10.dp))
+                if (logs.isEmpty()) {
+                    Text("No failed unlock attempts recorded yet.", fontSize = 12.5.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f))
+                } else {
+                    LazyColumn(verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxSize()) {
+                        items(logs) { line ->
+                            Surface(shape = RoundedCornerShape(10.dp), color = MaterialTheme.colorScheme.surface, border = BorderStroke(1.dp, Color(0xFFEF4444).copy(alpha = 0.4f)), modifier = Modifier.fillMaxWidth()) {
+                                Text(line, fontSize = 11.5.sp, fontFamily = FontFamily.Monospace, modifier = Modifier.padding(10.dp))
+                            }
+                        }
                     }
                 }
             }
