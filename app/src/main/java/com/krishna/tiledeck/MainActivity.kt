@@ -19,18 +19,14 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.compose.animation.*
-import androidx.compose.animation.core.*
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -44,13 +40,11 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.scale
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -60,77 +54,72 @@ import com.krishna.tiledeck.accessibility.TileDeckAccessibilityService
 import com.krishna.tiledeck.data.TileCatalog
 import com.krishna.tiledeck.data.TilePrefs
 import com.krishna.tiledeck.data.TileSpec
-import com.krishna.tiledeck.system.MotoTools
 import com.krishna.tiledeck.tiles.TileActionEngine
-import com.krishna.tiledeck.ui.*
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
+import com.krishna.tiledeck.tiles.TileExecutionResult
 
-sealed interface DeckRoute {
-    data object Home : DeckRoute
-    data class Category(val name: String) : DeckRoute
-    data class TileDetail(val tileId: String) : DeckRoute
-    data object AppsLock : DeckRoute
-    data object Permissions : DeckRoute
-    data object HubSettings : DeckRoute
+sealed interface PageRoute {
+    data object Deck : PageRoute
+    data class Category(val name: String) : PageRoute
+    data class TileDetail(val id: String) : PageRoute
+    data object AppLock : PageRoute
+    data object SelfTester : PageRoute
+    data object Permissions : PageRoute
 }
 
-data class InstalledAppItem(
-    val label: String,
-    val packageName: String,
-    val icon: ImageBitmap?
-)
+data class InstalledAppRow(val label: String, val pkg: String, val icon: ImageBitmap?)
+data class TestRecord(val spec: TileSpec, val result: TileExecutionResult)
 
-private fun drawableToImageBitmap(drawable: Drawable, sizePx: Int = 72): ImageBitmap? = runCatching {
-    val bmp = Bitmap.createBitmap(sizePx, sizePx, Bitmap.Config.ARGB_8888)
-    val canvas = Canvas(bmp)
-    drawable.setBounds(0, 0, sizePx, sizePx)
-    drawable.draw(canvas)
-    bmp.asImageBitmap()
+private fun toImgBitmap(d: Drawable, px: Int = 72): ImageBitmap? = runCatching {
+    val b = Bitmap.createBitmap(px, px, Bitmap.Config.ARGB_8888)
+    val c = Canvas(b)
+    d.setBounds(0, 0, px, px)
+    d.draw(c)
+    b.asImageBitmap()
 }.getOrNull()
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val initialRoute: DeckRoute = when (intent?.data?.host) {
-            "applock" -> DeckRoute.AppsLock
-            "permissions" -> DeckRoute.Permissions
-            "tile" -> {
-                val id = intent?.data?.lastPathSegment
-                if (id != null && TileCatalog.findById(id) != null) DeckRoute.TileDetail(id) else DeckRoute.Home
-            }
-            else -> DeckRoute.Home
+        val startRoute: PageRoute = when (intent?.data?.host) {
+            "applock" -> PageRoute.AppLock
+            "permissions" -> PageRoute.Permissions
+            "tester" -> PageRoute.SelfTester
+            else -> PageRoute.Deck
         }
 
         setContent {
-            var darkTheme by remember { mutableStateOf(TilePrefs.isDarkTheme(this)) }
-            val colors = if (darkTheme) {
+            var dark by remember { mutableStateOf(TilePrefs.isDarkTheme(this)) }
+            val scheme = if (dark) {
                 darkColorScheme(
-                    primary = Color(0xFF2DD4BF),
-                    secondary = Color(0xFF38BDF8),
-                    background = Color(0xFF070A10),
-                    surface = Color(0xCC111826),
-                    surfaceVariant = Color(0xFF1B2436)
+                    primary = Color(0xFF10B981),
+                    onPrimary = Color(0xFF041A12),
+                    background = Color(0xFF09090B),
+                    surface = Color(0xFF111114),
+                    surfaceVariant = Color(0xFF18181B),
+                    onBackground = Color(0xFFFAFAFA),
+                    onSurface = Color(0xFFFAFAFA),
+                    outline = Color(0xFF27272A)
                 )
             } else {
                 lightColorScheme(
-                    primary = Color(0xFF0F766E),
-                    secondary = Color(0xFF0284C7),
-                    background = Color(0xFFF2F6FB),
-                    surface = Color(0xE6FFFFFF),
-                    surfaceVariant = Color(0xFFE5EEF8)
+                    primary = Color(0xFF059669),
+                    onPrimary = Color.White,
+                    background = Color(0xFFFAFAFA),
+                    surface = Color(0xFFFFFFFF),
+                    surfaceVariant = Color(0xFFF4F4F5),
+                    onBackground = Color(0xFF09090B),
+                    onSurface = Color(0xFF09090B),
+                    outline = Color(0xFFE4E4E7)
                 )
             }
 
-            MaterialTheme(colorScheme = colors) {
-                TileDeckMultiPageApp(
-                    initialRoute = initialRoute,
-                    darkTheme = darkTheme,
+            MaterialTheme(colorScheme = scheme) {
+                TileDeckV8Shell(
+                    startRoute = startRoute,
+                    dark = dark,
                     onToggleTheme = {
-                        darkTheme = !darkTheme
-                        TilePrefs.setDarkTheme(this, darkTheme)
+                        dark = !dark
+                        TilePrefs.setDarkTheme(this, dark)
                     }
                 )
             }
@@ -139,450 +128,292 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-private fun TileDeckMultiPageApp(
-    initialRoute: DeckRoute,
-    darkTheme: Boolean,
-    onToggleTheme: () -> Unit
-) {
+private fun TileDeckV8Shell(startRoute: PageRoute, dark: Boolean, onToggleTheme: () -> Unit) {
     val context = LocalContext.current
-    val scope = rememberCoroutineScope()
-    val backStack = remember {
-        mutableStateListOf<DeckRoute>().apply {
-            add(DeckRoute.Home)
-            if (initialRoute != DeckRoute.Home) add(initialRoute)
+    val stack = remember {
+        mutableStateListOf<PageRoute>().apply {
+            add(PageRoute.Deck)
+            if (startRoute != PageRoute.Deck) add(startRoute)
         }
     }
-    var navForward by remember { mutableStateOf(true) }
-    var hasRoot by remember { mutableStateOf(TilePrefs.isRootGranted(context)) }
-    var checkingRoot by remember { mutableStateOf(false) }
-    var refreshTick by remember { mutableIntStateOf(0) }
+    var forward by remember { mutableStateOf(true) }
+    var tick by remember { mutableIntStateOf(0) }
 
-    fun navigate(route: DeckRoute) {
-        if (backStack.lastOrNull() == route) return
-        navForward = true
-        backStack.add(route)
+    fun push(r: PageRoute) { if (stack.lastOrNull() != r) { forward = true; stack.add(r) } }
+    fun pop() { if (stack.size > 1) { forward = false; stack.removeAt(stack.lastIndex) } }
+    fun tab(r: PageRoute) {
+        if (stack.lastOrNull() == r) return
+        forward = r != PageRoute.Deck
+        stack.clear(); stack.add(PageRoute.Deck)
+        if (r != PageRoute.Deck) stack.add(r)
     }
 
-    fun switchTopLevel(route: DeckRoute) {
-        if (backStack.lastOrNull() == route) return
-        navForward = route != DeckRoute.Home
-        backStack.clear()
-        backStack.add(DeckRoute.Home)
-        if (route != DeckRoute.Home) backStack.add(route)
-    }
+    BackHandler(enabled = stack.size > 1) { pop() }
+    val cur = stack.last()
 
-    fun popBack() {
-        if (backStack.size > 1) {
-            navForward = false
-            backStack.removeAt(backStack.lastIndex)
-        }
-    }
-
-    BackHandler(enabled = backStack.size > 1) { popBack() }
-
-    fun triggerSuRequest() {
-        if (checkingRoot) return
-        checkingRoot = true
-        scope.launch {
-            val granted = withContext(Dispatchers.IO) { MotoTools.requestRootAndSync(context) }
-            hasRoot = granted
-            checkingRoot = false
-            refreshTick++
-        }
-    }
-
-    LaunchedEffect(Unit) { triggerSuRequest() }
-
-    val currentRoute = backStack.last()
-    val navTabs = listOf(
-        Triple("Home", Icons.Rounded.Dashboard, DeckRoute.Home),
-        Triple("App Lock", Icons.Rounded.Security, DeckRoute.AppsLock),
-        Triple("Permissions", Icons.Rounded.Tune, DeckRoute.Permissions),
-        Triple("Hub API", Icons.Rounded.Hub, DeckRoute.HubSettings)
+    val nav = listOf(
+        Triple("Deck", Icons.Rounded.GridView, PageRoute.Deck),
+        Triple("Lock", Icons.Rounded.Lock, PageRoute.AppLock),
+        Triple("Tester", Icons.Rounded.BugReport, PageRoute.SelfTester),
+        Triple("Perms", Icons.Rounded.Tune, PageRoute.Permissions)
     )
 
-    Box(modifier = Modifier.fillMaxSize()) {
-        LivingDeckBackground(darkTheme = darkTheme)
-
-        Scaffold(
-            containerColor = Color.Transparent,
-            bottomBar = {
-                NavigationBar(containerColor = MaterialTheme.colorScheme.surface, tonalElevation = 0.dp) {
-                    navTabs.forEach { (label, icon, route) ->
-                        val selected = when (route) {
-                            DeckRoute.Home -> currentRoute is DeckRoute.Home || currentRoute is DeckRoute.Category || currentRoute is DeckRoute.TileDetail
-                            else -> currentRoute == route
-                        }
+    Scaffold(
+        containerColor = MaterialTheme.colorScheme.background,
+        bottomBar = {
+            Surface(color = MaterialTheme.colorScheme.surface, border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)) {
+                NavigationBar(containerColor = Color.Transparent, tonalElevation = 0.dp) {
+                    nav.forEach { (label, icon, r) ->
+                        val sel = (r == PageRoute.Deck && (cur is PageRoute.Deck || cur is PageRoute.Category || cur is PageRoute.TileDetail)) || cur == r
                         NavigationBarItem(
-                            selected = selected,
-                            onClick = { switchTopLevel(route) },
+                            selected = sel,
+                            onClick = { tab(r) },
                             icon = { Icon(icon, contentDescription = label) },
-                            label = { Text(label, fontSize = 11.sp, fontWeight = FontWeight.Medium) }
+                            label = { Text(label, fontSize = 11.sp, fontWeight = FontWeight.SemiBold) }
                         )
                     }
                 }
             }
-        ) { padding ->
-            AnimatedContent(
-                targetState = currentRoute,
-                modifier = Modifier.fillMaxSize().padding(padding),
-                transitionSpec = {
-                    if (navForward) {
-                        (slideInHorizontally(tween(260)) { it / 3 } + fadeIn(tween(220)))
-                            .togetherWith(slideOutHorizontally(tween(220)) { -it / 5 } + fadeOut(tween(160)))
-                    } else {
-                        (slideInHorizontally(tween(260)) { -it / 3 } + fadeIn(tween(220)))
-                            .togetherWith(slideOutHorizontally(tween(220)) { it / 5 } + fadeOut(tween(160)))
-                    }
-                },
-                label = "page_transition"
-            ) { route ->
-                when (route) {
-                    is DeckRoute.Home -> HomeDashboardPage(
-                        hasRoot = hasRoot,
-                        checkingRoot = checkingRoot,
-                        darkTheme = darkTheme,
-                        tick = refreshTick,
-                        onToggleTheme = onToggleTheme,
-                        onRequestSu = { triggerSuRequest() },
-                        onOpenCategory = { navigate(DeckRoute.Category(it)) },
-                        onOpenTile = { navigate(DeckRoute.TileDetail(it)) },
-                        onQuickRun = {
-                            TileActionEngine.execute(context, it)
-                            refreshTick++
-                        }
-                    )
-                    is DeckRoute.Category -> CategoryDetailPage(
-                        categoryName = route.name,
-                        hasRoot = hasRoot,
-                        tick = refreshTick,
-                        onBack = { popBack() },
-                        onOpenTile = { navigate(DeckRoute.TileDetail(it)) },
-                        onChanged = { refreshTick++ }
-                    )
-                    is DeckRoute.TileDetail -> TileInspectorPage(
-                        tileId = route.tileId,
-                        tick = refreshTick,
-                        onBack = { popBack() },
-                        onChanged = { refreshTick++ }
-                    )
-                    is DeckRoute.AppsLock -> AppsAndLockPage(
-                        hasRoot = hasRoot,
-                        onBack = { popBack() }
-                    )
-                    is DeckRoute.Permissions -> PermissionsPage(
-                        hasRoot = hasRoot,
-                        checkingRoot = checkingRoot,
-                        onRequestSu = { triggerSuRequest() },
-                        onBack = { popBack() }
-                    )
-                    is DeckRoute.HubSettings -> HubSettingsPage(
-                        hasRoot = hasRoot,
-                        darkTheme = darkTheme,
-                        onToggleTheme = onToggleTheme,
-                        onBack = { popBack() }
-                    )
+        }
+    ) { pad ->
+        AnimatedContent(
+            targetState = cur,
+            modifier = Modifier.fillMaxSize().padding(pad),
+            transitionSpec = {
+                if (forward) {
+                    (slideInHorizontally(tween(220)) { it / 4 } + fadeIn(tween(180)))
+                        .togetherWith(slideOutHorizontally(tween(180)) { -it / 6 } + fadeOut(tween(130)))
+                } else {
+                    (slideInHorizontally(tween(220)) { -it / 4 } + fadeIn(tween(180)))
+                        .togetherWith(slideOutHorizontally(tween(180)) { it / 6 } + fadeOut(tween(130)))
                 }
+            },
+            label = "v8_nav"
+        ) { route ->
+            when (route) {
+                is PageRoute.Deck -> DeckHomePage(
+                    dark = dark, tick = tick, onToggleTheme = onToggleTheme,
+                    onOpenCat = { push(PageRoute.Category(it)) },
+                    onOpenTester = { tab(PageRoute.SelfTester) },
+                    onQuickRun = { TileActionEngine.execute(context, it); tick++ }
+                )
+                is PageRoute.Category -> CategoryPage(
+                    catName = route.name, tick = tick, onBack = { pop() },
+                    onOpenTile = { push(PageRoute.TileDetail(it)) },
+                    onChanged = { tick++ }
+                )
+                is PageRoute.TileDetail -> TileDetailPage(
+                    tileId = route.id, tick = tick, onBack = { pop() }, onChanged = { tick++ }
+                )
+                is PageRoute.AppLock -> AppLockPage(onBack = { pop() })
+                is PageRoute.SelfTester -> SelfTesterPage(onBack = { pop() })
+                is PageRoute.Permissions -> PermissionsPage(onBack = { pop() })
             }
         }
     }
 }
 
 @Composable
-private fun SubPageHeader(title: String, subtitle: String, onBack: () -> Unit) {
+private fun PageHeader(title: String, meta: String, onBack: (() -> Unit)? = null, trailing: @Composable (() -> Unit)? = null) {
     Row(
-        modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
+        modifier = Modifier.fillMaxWidth().padding(bottom = 14.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        IconButton(
-            onClick = onBack,
-            modifier = Modifier
-                .size(40.dp)
-                .clip(CircleShape)
-                .background(MaterialTheme.colorScheme.surface)
-        ) {
-            Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "Back")
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+            if (onBack != null) {
+                Surface(
+                    shape = CircleShape,
+                    color = MaterialTheme.colorScheme.surface,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+                    modifier = Modifier.size(38.dp).clickable { onBack() }
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "Back", modifier = Modifier.size(18.dp))
+                    }
+                }
+                Spacer(Modifier.width(12.dp))
+            }
+            Column {
+                Text(title, fontSize = 20.sp, fontWeight = FontWeight.Bold, letterSpacing = (-0.4).sp)
+                Text(meta, fontSize = 11.sp, fontFamily = FontFamily.Monospace, color = MaterialTheme.colorScheme.primary)
+            }
         }
-        Spacer(Modifier.width(12.dp))
-        Column {
-            Text(title, fontSize = 19.sp, fontWeight = FontWeight.Bold)
-            Text(subtitle, fontSize = 11.5.sp, color = MaterialTheme.colorScheme.primary)
-        }
+        trailing?.invoke()
     }
 }
 
 @Composable
-private fun HomeDashboardPage(
-    hasRoot: Boolean,
-    checkingRoot: Boolean,
-    darkTheme: Boolean,
+private fun DeckHomePage(
+    dark: Boolean,
     tick: Int,
     onToggleTheme: () -> Unit,
-    onRequestSu: () -> Unit,
-    onOpenCategory: (String) -> Unit,
-    onOpenTile: (String) -> Unit,
+    onOpenCat: (String) -> Unit,
+    onOpenTester: () -> Unit,
     onQuickRun: (String) -> Unit
 ) {
     val context = LocalContext.current
-    val visibleTiles = remember(hasRoot) { TileCatalog.visibleTiles(hasRoot) }
-    val enabledTiles = remember(hasRoot, tick) { visibleTiles.filter { TilePrefs.isTileEnabledInPanel(context, it) } }
-    val categories = remember(hasRoot) { TileCatalog.visibleCategories(hasRoot).filter { it != "All" } }
-    val a11yReady = TileDeckAccessibilityService.instance != null
+    val enabledTiles = remember(tick) { TileCatalog.allTiles.filter { TilePrefs.isTileEnabledInPanel(context, it) } }
 
     Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = 16.dp, vertical = 12.dp)
+        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp)
     ) {
-        // Ambient Video Hero Card
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(150.dp)
-                .clip(RoundedCornerShape(22.dp))
-                .border(1.dp, Color(0x382DD4BF), RoundedCornerShape(22.dp))
-        ) {
-            AmbientHeroVideo(modifier = Modifier.fillMaxSize())
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(Brush.horizontalGradient(listOf(Color(0xDC070B12), Color(0x940B1320), Color(0xCC070B12))))
-            )
-            Row(
-                modifier = Modifier.fillMaxSize().padding(16.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        PulsingDot(color = if (hasRoot) Color(0xFF2DD4BF) else Color(0xFFF59E0B), active = true)
-                        Text(
-                            text = if (checkingRoot) "CHECKING SU..." else if (hasRoot) "SU GRANTED | FULL DECK" else "NON-ROOT MODE",
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.Bold,
-                            letterSpacing = 0.8.sp,
-                            color = if (hasRoot) Color(0xFF2DD4BF) else Color(0xFFFBBF24)
-                        )
-                    }
-                    Spacer(Modifier.height(4.dp))
-                    Text("TileDeck v6.0", fontSize = 23.sp, fontWeight = FontWeight.ExtraBold, color = Color.White)
-                    Text(
-                        text = if (hasRoot) "${visibleTiles.size} direct tiles across ${categories.size} pages"
-                        else "${visibleTiles.size} tiles (${TileCatalog.hiddenRootCount()} root hidden)",
-                        fontSize = 12.sp,
-                        color = Color.White.copy(alpha = 0.75f)
-                    )
-                    Spacer(Modifier.height(10.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        if (!hasRoot) {
-                            Surface(
-                                shape = RoundedCornerShape(999.dp),
-                                color = Color(0x332DD4BF),
-                                border = BorderStroke(1.dp, Color(0xFF2DD4BF)),
-                                modifier = Modifier.clickable(enabled = !checkingRoot) { onRequestSu() }
-                            ) {
-                                Text(
-                                    if (checkingRoot) "Asking..." else "Request SU",
-                                    fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF2DD4BF),
-                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp)
-                                )
-                            }
-                        }
-                        Surface(
-                            shape = RoundedCornerShape(999.dp),
-                            color = Color(0x26FFFFFF),
-                            modifier = Modifier.clickable { onToggleTheme() }
-                        ) {
-                            Text(
-                                if (darkTheme) "Light" else "Dark",
-                                fontSize = 11.sp, fontWeight = FontWeight.Medium, color = Color.White,
-                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp)
-                            )
-                        }
-                    }
+        PageHeader(
+            title = "TILEDECK",
+            meta = "v8.0 | 102 DIRECT NON-ROOT TILES",
+            trailing = {
+                OutlinedButton(onClick = onToggleTheme, shape = RoundedCornerShape(10.dp), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)) {
+                    Text(if (dark) "LIGHT" else "DARK", fontSize = 11.sp, fontFamily = FontFamily.Monospace)
                 }
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    AnimatedRingGauge(
-                        progress = enabledTiles.size.toFloat() / visibleTiles.size.coerceAtLeast(1),
-                        label = "Shade", valueText = "${enabledTiles.size}", accent = Color(0xFF2DD4BF)
-                    )
-                    AnimatedRingGauge(
-                        progress = if (a11yReady) 1f else 0.25f,
-                        label = "A11y", valueText = if (a11yReady) "ON" else "OFF",
-                        accent = if (a11yReady) Color(0xFF38BDF8) else Color(0xFFF59E0B)
-                    )
+            }
+        )
+
+        // 3 Crisp Metric Cards
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            MetricBox("IN SHADE", "${enabledTiles.size}", Modifier.weight(1f))
+            MetricBox("CATALOG", "${TileCatalog.allTiles.size}", Modifier.weight(1f))
+            MetricBox("ROOT", "NONE", Modifier.weight(1f))
+        }
+
+        Spacer(Modifier.height(12.dp))
+
+        // Quick Self-Tester Callout
+        Surface(
+            shape = RoundedCornerShape(14.dp),
+            color = MaterialTheme.colorScheme.surface,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.45f)),
+            modifier = Modifier.fillMaxWidth().clickable { onOpenTester() }
+        ) {
+            Row(modifier = Modifier.padding(14.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Self-Tester & Copy Broken Report", fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                    Text("Run diagnostics on all 102 tiles and copy any failures in 1 tap.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f))
+                }
+                Icon(Icons.Rounded.ChevronRight, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+            }
+        }
+
+        Spacer(Modifier.height(16.dp))
+        Text("ACTIVE IN SHADE", fontSize = 11.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
+        Spacer(Modifier.height(8.dp))
+
+        Row(modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            enabledTiles.forEach { spec ->
+                val active = TilePrefs.isTileActive(context, spec.id)
+                val sub = TilePrefs.getSubtitle(context, spec.id, "Ready")
+                Surface(
+                    shape = RoundedCornerShape(14.dp),
+                    color = if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surface,
+                    border = BorderStroke(1.dp, if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline),
+                    modifier = Modifier.width(136.dp).clickable { onQuickRun(spec.id) }
+                ) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Icon(
+                            painter = painterResource(spec.iconRes),
+                            contentDescription = spec.name,
+                            tint = if (active) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        Text(spec.name, fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis, color = if (active) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface)
+                        Text(sub, fontSize = 10.5.sp, fontFamily = FontFamily.Monospace, maxLines = 1, color = if (active) MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.8f) else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
+                    }
                 }
             }
         }
 
         Spacer(Modifier.height(18.dp))
-        Text("Active in Quick Settings (${enabledTiles.size})", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+        Text("CATEGORIES", fontSize = 11.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
         Spacer(Modifier.height(8.dp))
-        Row(
-            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            enabledTiles.forEach { spec ->
-                val active = TilePrefs.isTileActive(context, spec.id)
-                val sub = TilePrefs.getSubtitle(context, spec.id, "Ready")
-                Surface(
-                    shape = RoundedCornerShape(16.dp),
-                    color = if (active) MaterialTheme.colorScheme.primary.copy(alpha = 0.22f) else MaterialTheme.colorScheme.surface,
-                    border = BorderStroke(1.dp, if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f)),
-                    modifier = Modifier.width(138.dp).clickable { onQuickRun(spec.id) }
-                ) {
-                    Column(modifier = Modifier.padding(12.dp)) {
-                        Icon(tileIcon(spec.id, spec.category), contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
-                        Spacer(Modifier.height(8.dp))
-                        Text(spec.name, fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Text(sub, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f), maxLines = 1)
-                    }
-                }
-            }
-        }
 
-        Spacer(Modifier.height(20.dp))
-        Text("Tile Categories", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-        Spacer(Modifier.height(10.dp))
-
-        // 2-Column Category Hub Cards (each opens its own dedicated page)
-        categories.chunked(2).forEach { rowCats ->
-            Row(modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                rowCats.forEach { cat ->
-                    val catTiles = visibleTiles.filter { it.category == cat }
-                    val catEnabled = catTiles.count { TilePrefs.isTileEnabledInPanel(context, it) }
+        TileCatalog.categories.chunked(2).forEach { pair ->
+            Row(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                pair.forEach { cat ->
+                    val list = TileCatalog.allTiles.filter { it.category == cat }
+                    val onCount = list.count { TilePrefs.isTileEnabledInPanel(context, it) }
                     Surface(
-                        shape = RoundedCornerShape(18.dp),
+                        shape = RoundedCornerShape(14.dp),
                         color = MaterialTheme.colorScheme.surface,
-                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.22f)),
-                        modifier = Modifier.weight(1f).clickable { onOpenCategory(cat) }
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+                        modifier = Modifier.weight(1f).clickable { onOpenCat(cat) }
                     ) {
                         Column(modifier = Modifier.padding(14.dp)) {
                             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                                Box(
-                                    contentAlignment = Alignment.Center,
-                                    modifier = Modifier.size(38.dp).clip(RoundedCornerShape(11.dp)).background(MaterialTheme.colorScheme.primary.copy(alpha = 0.16f))
-                                ) {
-                                    Icon(categoryIcon(cat), contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
-                                }
-                                Icon(Icons.Rounded.ChevronRight, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f))
+                                Icon(painter = painterResource(list.first().iconRes), contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
+                                Text("${list.size}", fontSize = 12.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
                             }
-                            Spacer(Modifier.height(12.dp))
+                            Spacer(Modifier.height(10.dp))
                             Text(cat, fontSize = 13.5.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text("${catTiles.size} tiles | $catEnabled on", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f))
+                            Text("$onCount active in panel", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
                         }
                     }
                 }
-                if (rowCats.size == 1) Spacer(Modifier.weight(1f))
+                if (pair.size == 1) Spacer(Modifier.weight(1f))
             }
         }
     }
 }
 
 @Composable
-private fun CategoryDetailPage(
-    categoryName: String,
-    hasRoot: Boolean,
-    tick: Int,
-    onBack: () -> Unit,
-    onOpenTile: (String) -> Unit,
-    onChanged: () -> Unit
-) {
-    val context = LocalContext.current
-    var search by remember { mutableStateOf("") }
-    val catTiles = remember(categoryName, hasRoot, search, tick) {
-        TileCatalog.visibleTiles(hasRoot).filter {
-            it.category == categoryName &&
-                (search.isBlank() || it.name.contains(search, true) || it.description.contains(search, true))
-        }
-    }
-
-    Column(modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 12.dp)) {
-        SubPageHeader(title = categoryName, subtitle = "${catTiles.size} direct-action tiles", onBack = onBack)
-        OutlinedTextField(
-            value = search,
-            onValueChange = { search = it },
-            leadingIcon = { Icon(Icons.Rounded.Search, contentDescription = null) },
-            placeholder = { Text("Search in $categoryName...") },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(14.dp)
-        )
-        Spacer(Modifier.height(12.dp))
-        LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxSize()) {
-            items(catTiles, key = { it.id }) { spec ->
-                AnimatedTileRowCard(
-                    spec = spec,
-                    enabled = TilePrefs.isTileEnabledInPanel(context, spec),
-                    active = TilePrefs.isTileActive(context, spec.id),
-                    subtitle = TilePrefs.getSubtitle(context, spec.id, "Off"),
-                    onOpenDetail = { onOpenTile(spec.id) },
-                    onToggle = { TilePrefs.setTileEnabledInPanel(context, spec, it); onChanged() },
-                    onRun = { TileActionEngine.execute(context, spec.id); onChanged() }
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun AnimatedTileRowCard(
-    spec: TileSpec,
-    enabled: Boolean,
-    active: Boolean,
-    subtitle: String,
-    onOpenDetail: () -> Unit,
-    onToggle: (Boolean) -> Unit,
-    onRun: () -> Unit
-) {
-    var pressed by remember { mutableStateOf(false) }
-    val scale by animateFloatAsState(
-        targetValue = if (pressed) 0.97f else 1f,
-        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy),
-        label = "row_scale"
-    )
-    LaunchedEffect(pressed) { if (pressed) { delay(120); pressed = false } }
-
+private fun MetricBox(label: String, value: String, modifier: Modifier = Modifier) {
     Surface(
-        shape = RoundedCornerShape(16.dp),
+        shape = RoundedCornerShape(12.dp),
         color = MaterialTheme.colorScheme.surface,
-        border = BorderStroke(1.dp, if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.09f)),
-        modifier = Modifier.fillMaxWidth().scale(scale).clickable { onOpenDetail() }
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+        modifier = modifier
     ) {
-        Column(modifier = Modifier.padding(14.dp)) {
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                Row(modifier = Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
-                    Box(
-                        contentAlignment = Alignment.Center,
-                        modifier = Modifier.size(40.dp).clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.surfaceVariant)
-                    ) {
-                        Icon(tileIcon(spec.id, spec.category), contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
-                    }
-                    Spacer(Modifier.width(12.dp))
-                    Column {
-                        Text(spec.name, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
-                        Text(spec.permissionTier, fontSize = 11.sp, color = MaterialTheme.colorScheme.primary)
-                    }
-                }
-                Switch(checked = enabled, onCheckedChange = onToggle)
-            }
-            Spacer(Modifier.height(8.dp))
-            Text(spec.description, fontSize = 12.5.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.76f))
-            Spacer(Modifier.height(10.dp))
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    modifier = Modifier.clip(RoundedCornerShape(999.dp)).background(MaterialTheme.colorScheme.surfaceVariant).padding(horizontal = 10.dp, vertical = 5.dp)
+        Column(modifier = Modifier.padding(12.dp)) {
+            Text(label, fontSize = 10.sp, fontFamily = FontFamily.Monospace, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f))
+            Spacer(Modifier.height(4.dp))
+            Text(value, fontSize = 18.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
+        }
+    }
+}
+
+@Composable
+private fun CategoryPage(catName: String, tick: Int, onBack: () -> Unit, onOpenTile: (String) -> Unit, onChanged: () -> Unit) {
+    val context = LocalContext.current
+    var q by remember { mutableStateOf("") }
+    val tiles = remember(catName, q, tick) {
+        TileCatalog.allTiles.filter { it.category == catName && (q.isBlank() || it.name.contains(q, true) || it.description.contains(q, true)) }
+    }
+
+    Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
+        PageHeader(title = catName, meta = "${tiles.size} TILES | DEDICATED SVG ICONS", onBack = onBack)
+        OutlinedTextField(
+            value = q, onValueChange = { q = it },
+            placeholder = { Text("Filter $catName...") },
+            singleLine = true, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp)
+        )
+        Spacer(Modifier.height(10.dp))
+        LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxSize()) {
+            items(tiles, key = { it.id }) { spec ->
+                val enabled = TilePrefs.isTileEnabledInPanel(context, spec)
+                val sub = TilePrefs.getSubtitle(context, spec.id, "Off")
+                Surface(
+                    shape = RoundedCornerShape(14.dp),
+                    color = MaterialTheme.colorScheme.surface,
+                    border = BorderStroke(1.dp, if (enabled) MaterialTheme.colorScheme.primary.copy(alpha = 0.45f) else MaterialTheme.colorScheme.outline),
+                    modifier = Modifier.fillMaxWidth().clickable { onOpenTile(spec.id) }
                 ) {
-                    PulsingDot(color = if (active) MaterialTheme.colorScheme.primary else Color.Gray, active = active)
-                    Text(subtitle, fontSize = 11.sp)
-                }
-                FilledTonalButton(onClick = { pressed = true; onRun() }, contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)) {
-                    Icon(Icons.Rounded.PlayArrow, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(Modifier.width(4.dp))
-                    Text("Run", fontSize = 12.sp)
+                    Row(modifier = Modifier.padding(12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                        Row(modifier = Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
+                            Box(
+                                contentAlignment = Alignment.Center,
+                                modifier = Modifier.size(40.dp).clip(RoundedCornerShape(10.dp)).background(MaterialTheme.colorScheme.surfaceVariant)
+                            ) {
+                                Icon(painter = painterResource(spec.iconRes), contentDescription = spec.name, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
+                            }
+                            Spacer(Modifier.width(12.dp))
+                            Column {
+                                Text(spec.name, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                                Text("${spec.permissionTier} | $sub", fontSize = 11.sp, fontFamily = FontFamily.Monospace, color = MaterialTheme.colorScheme.primary)
+                                Text(spec.description, fontSize = 11.5.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.68f), maxLines = 2)
+                            }
+                        }
+                        Spacer(Modifier.width(8.dp))
+                        Switch(checked = enabled, onCheckedChange = { TilePrefs.setTileEnabledInPanel(context, spec, it); onChanged() })
+                    }
                 }
             }
         }
@@ -590,148 +421,171 @@ private fun AnimatedTileRowCard(
 }
 
 @Composable
-private fun TileInspectorPage(tileId: String, tick: Int, onBack: () -> Unit, onChanged: () -> Unit) {
+private fun TileDetailPage(tileId: String, tick: Int, onBack: () -> Unit, onChanged: () -> Unit) {
     val context = LocalContext.current
     val spec = TileCatalog.findById(tileId) ?: return
     val enabled = remember(tick) { TilePrefs.isTileEnabledInPanel(context, spec) }
-    val active = remember(tick) { TilePrefs.isTileActive(context, spec.id) }
-    val subtitle = remember(tick) { TilePrefs.getSubtitle(context, spec.id, "Off") }
-    val broadcastCmd = "am broadcast -a com.krishna.tiledeck.ACTION_TRIGGER_TILE --es tile_id ${spec.id}"
+    val sub = remember(tick) { TilePrefs.getSubtitle(context, spec.id, "Off") }
+    var lastTest by remember { mutableStateOf<TileExecutionResult?>(null) }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = 16.dp, vertical = 12.dp)
-    ) {
-        SubPageHeader(title = spec.name, subtitle = "${spec.category} | ${spec.permissionTier}", onBack = onBack)
-
-        Surface(
-            shape = RoundedCornerShape(20.dp),
-            color = MaterialTheme.colorScheme.surface,
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)),
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Column(modifier = Modifier.padding(20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                Box(
-                    contentAlignment = Alignment.Center,
-                    modifier = Modifier.size(68.dp).clip(RoundedCornerShape(20.dp)).background(MaterialTheme.colorScheme.primary.copy(alpha = 0.18f))
-                ) {
-                    Icon(tileIcon(spec.id, spec.category), contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(34.dp))
+    Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        PageHeader(title = spec.name, meta = "${spec.category} | ${spec.permissionTier}", onBack = onBack)
+        Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surface, border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline), modifier = Modifier.fillMaxWidth()) {
+            Column(modifier = Modifier.padding(18.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                Box(contentAlignment = Alignment.Center, modifier = Modifier.size(64.dp).clip(RoundedCornerShape(16.dp)).background(MaterialTheme.colorScheme.surfaceVariant)) {
+                    Icon(painter = painterResource(spec.iconRes), contentDescription = spec.name, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(32.dp))
                 }
                 Spacer(Modifier.height(12.dp))
-                Text(spec.name, fontSize = 20.sp, fontWeight = FontWeight.Bold)
-                Spacer(Modifier.height(4.dp))
                 Text(spec.description, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.78f))
-                Spacer(Modifier.height(16.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Button(onClick = { TileActionEngine.execute(context, spec.id); onChanged() }) {
-                        Icon(Icons.Rounded.PlayArrow, contentDescription = null)
-                        Spacer(Modifier.width(6.dp))
-                        Text("Run Tile Now")
-                    }
-                    OutlinedButton(onClick = { TilePrefs.setTileEnabledInPanel(context, spec, !enabled); onChanged() }) {
-                        Text(if (enabled) "Remove from Shade" else "Add to Shade")
-                    }
+                Spacer(Modifier.height(14.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = { lastTest = TileActionEngine.execute(context, spec.id, dryRunTest = false); onChanged() }) { Text("Run Now") }
+                    OutlinedButton(onClick = { TilePrefs.setTileEnabledInPanel(context, spec, !enabled); onChanged() }) { Text(if (enabled) "Remove Tile" else "Add to Shade") }
                 }
-                Spacer(Modifier.height(12.dp))
-                Text("Live State: $subtitle", fontSize = 12.sp, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold)
-            }
-        }
-
-        Spacer(Modifier.height(14.dp))
-        Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surface, modifier = Modifier.fillMaxWidth()) {
-            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("App Hub Integration", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                Text("Deep Link: tiledeck://tile/${spec.id}", fontSize = 12.sp, fontFamily = FontFamily.Monospace, color = MaterialTheme.colorScheme.primary)
-                Text(broadcastCmd, fontSize = 11.sp, fontFamily = FontFamily.Monospace, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f))
-                OutlinedButton(onClick = {
-                    val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                    cm.setPrimaryClip(ClipData.newPlainText("TileDeck Hub Cmd", broadcastCmd))
-                    Toast.makeText(context, "Broadcast command copied", Toast.LENGTH_SHORT).show()
-                }) { Text("Copy Trigger Command") }
+                Spacer(Modifier.height(10.dp))
+                Text("State: $sub", fontSize = 12.sp, fontFamily = FontFamily.Monospace, color = MaterialTheme.colorScheme.primary)
+                lastTest?.let {
+                    Spacer(Modifier.height(6.dp))
+                    Text("Diagnostic: ${if (it.ok) "PASS" else "FAIL"} - ${it.diagnostic}", fontSize = 11.5.sp, fontFamily = FontFamily.Monospace, color = if (it.ok) MaterialTheme.colorScheme.primary else Color(0xFFEF4444))
+                }
             }
         }
     }
 }
 
 @Composable
-private fun AppsAndLockPage(hasRoot: Boolean, onBack: () -> Unit) {
+private fun SelfTesterPage(onBack: () -> Unit) {
     val context = LocalContext.current
-    var appSearch by remember { mutableStateOf("") }
-    var pinInput by remember { mutableStateOf(TilePrefs.getAppLockPin(context)) }
+    var results by remember { mutableStateOf<List<TestRecord>>(emptyList()) }
+    var failedOnly by remember { mutableStateOf(false) }
+
+    fun runAll() {
+        results = TileCatalog.allTiles.map { spec ->
+            TestRecord(spec, TileActionEngine.execute(context, spec.id, dryRunTest = true))
+        }
+    }
+
+    LaunchedEffect(Unit) { if (results.isEmpty()) runAll() }
+
+    val failed = results.filter { !it.result.ok }
+    val passed = results.size - failed.size
+    val shown = if (failedOnly) failed else results
+
+    fun copyFailedReport() {
+        val text = if (failed.isEmpty()) {
+            "TileDeck v8.0 Self-Test: ALL ${results.size} tiles PASSED (0 failures)."
+        } else {
+            buildString {
+                appendLine("TileDeck v8.0 Failed Tiles (${failed.size}/${results.size}):")
+                failed.forEach { rec ->
+                    appendLine("- ${rec.spec.id} (${rec.spec.name} | ${rec.spec.permissionTier}): ${rec.result.diagnostic}")
+                }
+            }.trim()
+        }
+        val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        cm.setPrimaryClip(ClipData.newPlainText("TileDeck Broken Tiles", text))
+        Toast.makeText(context, if (failed.isEmpty()) "All passed report copied" else "Copied ${failed.size} non-working tiles", Toast.LENGTH_SHORT).show()
+    }
+
+    Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
+        PageHeader(title = "Self-Tester", meta = "PASS: $passed | FAIL: ${failed.size} / ${results.size}", onBack = onBack)
+
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(onClick = { runAll() }, modifier = Modifier.weight(1f), shape = RoundedCornerShape(10.dp)) {
+                Text("Test All 102", fontSize = 12.sp)
+            }
+            OutlinedButton(onClick = { copyFailedReport() }, modifier = Modifier.weight(1f), shape = RoundedCornerShape(10.dp)) {
+                Text("Copy Broken (${failed.size})", fontSize = 12.sp)
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FilterChip(selected = !failedOnly, onClick = { failedOnly = false }, label = { Text("All (${results.size})") })
+            FilterChip(selected = failedOnly, onClick = { failedOnly = true }, label = { Text("Not Working (${failed.size})") })
+        }
+        Spacer(Modifier.height(8.dp))
+
+        LazyColumn(verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxSize()) {
+            items(shown, key = { it.spec.id }) { rec ->
+                val ok = rec.result.ok
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.surface,
+                    border = BorderStroke(1.dp, if (ok) MaterialTheme.colorScheme.outline else Color(0xFFEF4444).copy(alpha = 0.6f)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(modifier = Modifier.padding(12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("${rec.spec.name} (${rec.spec.id})", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                            Text(rec.result.diagnostic, fontSize = 11.sp, fontFamily = FontFamily.Monospace, color = if (ok) MaterialTheme.colorScheme.primary else Color(0xFFEF4444))
+                        }
+                        if (!ok) {
+                            TextButton(onClick = {
+                                val line = "${rec.spec.id} (${rec.spec.name}): ${rec.result.diagnostic}"
+                                val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                cm.setPrimaryClip(ClipData.newPlainText("Tile Error", line))
+                                Toast.makeText(context, "Copied failure", Toast.LENGTH_SHORT).show()
+                            }) { Text("Copy", fontSize = 11.sp) }
+                        } else {
+                            Text("PASS", fontSize = 11.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun AppLockPage(onBack: () -> Unit) {
+    val context = LocalContext.current
+    var q by remember { mutableStateOf("") }
+    var pin by remember { mutableStateOf(TilePrefs.getAppLockPin(context)) }
     var armed by remember { mutableStateOf(TilePrefs.isAppLockArmed(context)) }
     var tick by remember { mutableIntStateOf(0) }
 
-    val installedApps = remember {
+    val apps = remember {
         val pm = context.packageManager
-        val intent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
-        pm.queryIntentActivities(intent, 0)
-            .map { InstalledAppItem(it.loadLabel(pm).toString(), it.activityInfo.packageName, drawableToImageBitmap(it.loadIcon(pm))) }
-            .distinctBy { it.packageName }
-            .filter { it.packageName != context.packageName }
+        pm.queryIntentActivities(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER), 0)
+            .map { InstalledAppRow(it.loadLabel(pm).toString(), it.activityInfo.packageName, toImgBitmap(it.loadIcon(pm))) }
+            .distinctBy { it.pkg }
+            .filter { it.pkg != context.packageName }
             .sortedBy { it.label.lowercase() }
     }
-    val filteredApps = remember(appSearch, installedApps) {
-        installedApps.filter { appSearch.isBlank() || it.label.contains(appSearch, true) || it.packageName.contains(appSearch, true) }
-    }
+    val filtered = remember(q, apps) { apps.filter { q.isBlank() || it.label.contains(q, true) || it.pkg.contains(q, true) } }
 
-    Column(modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 12.dp)) {
-        SubPageHeader(
-            title = if (hasRoot) "Apps, Lock & Hidden Tray" else "Apps & PIN Lock",
-            subtitle = if (hasRoot) "Accessibility PIN Lock + Root Hide Tray" else "Accessibility PIN Lock",
-            onBack = onBack
-        )
-        Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surface, modifier = Modifier.fillMaxWidth()) {
+    Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
+        PageHeader(title = "App Lock", meta = "ACCESSIBILITY PIN SHIELD | NON-ROOT", onBack = onBack)
+        Surface(shape = RoundedCornerShape(14.dp), color = MaterialTheme.colorScheme.surface, border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline), modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                    Text("Arm App Lock Shield", fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
+                    Text("Arm App Lock", fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
                     Switch(checked = armed, onCheckedChange = { armed = it; TilePrefs.setAppLockArmed(context, it) })
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    OutlinedTextField(
-                        value = pinInput,
-                        onValueChange = { if (it.length <= 8 && it.all(Char::isDigit)) pinInput = it },
-                        label = { Text("PIN") }, singleLine = true, modifier = Modifier.weight(1f), shape = RoundedCornerShape(12.dp)
-                    )
-                    Button(onClick = { TilePrefs.setAppLockPin(context, pinInput) }) { Text("Save") }
+                    OutlinedTextField(value = pin, onValueChange = { if (it.length <= 8 && it.all(Char::isDigit)) pin = it }, label = { Text("PIN") }, singleLine = true, modifier = Modifier.weight(1f), shape = RoundedCornerShape(10.dp))
+                    Button(onClick = { TilePrefs.setAppLockPin(context, pin); Toast.makeText(context, "PIN saved", Toast.LENGTH_SHORT).show() }) { Text("Save") }
                 }
             }
         }
         Spacer(Modifier.height(10.dp))
-        OutlinedTextField(
-            value = appSearch, onValueChange = { appSearch = it },
-            leadingIcon = { Icon(Icons.Rounded.Search, contentDescription = null) },
-            placeholder = { Text("Search installed apps...") }, singleLine = true,
-            modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp)
-        )
+        OutlinedTextField(value = q, onValueChange = { q = it }, placeholder = { Text("Search apps...") }, singleLine = true, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp))
         Spacer(Modifier.height(8.dp))
-        LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxSize()) {
-            items(filteredApps, key = { it.packageName }) { app ->
-                val isLocked = remember(tick) { app.packageName in TilePrefs.getLockedPackages(context) }
-                val isHidden = remember(tick) { app.packageName in TilePrefs.getHiddenTrayPackages(context) }
-                Surface(shape = RoundedCornerShape(14.dp), color = MaterialTheme.colorScheme.surface, modifier = Modifier.fillMaxWidth()) {
-                    Row(modifier = Modifier.padding(12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+        LazyColumn(verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxSize()) {
+            items(filtered, key = { it.pkg }) { app ->
+                val locked = remember(tick) { app.pkg in TilePrefs.getLockedPackages(context) }
+                Surface(shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.surface, border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline), modifier = Modifier.fillMaxWidth()) {
+                    Row(modifier = Modifier.padding(10.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                         Row(modifier = Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
-                            if (app.icon != null) {
-                                Image(bitmap = app.icon, contentDescription = app.label, modifier = Modifier.size(38.dp).clip(RoundedCornerShape(10.dp)))
-                            } else {
-                                Box(contentAlignment = Alignment.Center, modifier = Modifier.size(38.dp).clip(RoundedCornerShape(10.dp)).background(MaterialTheme.colorScheme.surfaceVariant)) {
-                                    Icon(Icons.Rounded.Android, contentDescription = null)
-                                }
-                            }
+                            if (app.icon != null) Image(bitmap = app.icon, contentDescription = app.label, modifier = Modifier.size(36.dp).clip(RoundedCornerShape(8.dp)))
+                            else Box(contentAlignment = Alignment.Center, modifier = Modifier.size(36.dp).clip(RoundedCornerShape(8.dp)).background(MaterialTheme.colorScheme.surfaceVariant)) { Icon(Icons.Rounded.Android, contentDescription = null) }
                             Spacer(Modifier.width(10.dp))
                             Column {
-                                Text(app.label, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                Text(app.packageName, fontSize = 10.5.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text(app.label, fontSize = 13.5.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text(app.pkg, fontSize = 10.sp, fontFamily = FontFamily.Monospace, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f), maxLines = 1, overflow = TextOverflow.Ellipsis)
                             }
                         }
-                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            FilterChip(selected = isLocked, onClick = { TilePrefs.setPackageLocked(context, app.packageName, !isLocked); tick++ }, label = { Text("Lock", fontSize = 11.sp) })
-                            if (hasRoot) {
-                                FilterChip(selected = isHidden, onClick = { TilePrefs.setPackageInHiddenTray(context, app.packageName, !isHidden); tick++ }, label = { Text("Hide", fontSize = 11.sp) })
-                            }
-                        }
+                        Switch(checked = locked, onCheckedChange = { TilePrefs.setPackageLocked(context, app.pkg, it); tick++ })
                     }
                 }
             }
@@ -740,112 +594,39 @@ private fun AppsAndLockPage(hasRoot: Boolean, onBack: () -> Unit) {
 }
 
 @Composable
-private fun PermissionsPage(hasRoot: Boolean, checkingRoot: Boolean, onRequestSu: () -> Unit, onBack: () -> Unit) {
+private fun PermissionsPage(onBack: () -> Unit) {
     val context = LocalContext.current
     var tick by remember { mutableIntStateOf(0) }
-    val a11yGranted = remember(tick) { TileDeckAccessibilityService.instance != null }
-    val overlayGranted = remember(tick) { Settings.canDrawOverlays(context) }
-    val writeGranted = remember(tick) { Settings.System.canWrite(context) }
-    val dndGranted = remember(tick) { (context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).isNotificationPolicyAccessGranted }
-    val usageGranted = remember(tick) {
-        val appOps = context.getSystemService(Context.APP_OPS_SERVICE) as AppOpsManager
-        val mode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            appOps.unsafeCheckOpNoThrow(AppOpsManager.OPSTR_GET_USAGE_STATS, Process.myUid(), context.packageName)
-        } else {
-            @Suppress("DEPRECATION")
-            appOps.checkOpNoThrow(AppOpsManager.OPSTR_GET_USAGE_STATS, Process.myUid(), context.packageName)
-        }
-        mode == AppOpsManager.MODE_ALLOWED
+    val a11y = remember(tick) { TileDeckAccessibilityService.instance != null }
+    val write = remember(tick) { Settings.System.canWrite(context) }
+    val dnd = remember(tick) { (context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).isNotificationPolicyAccessGranted }
+    val usage = remember(tick) {
+        val ops = context.getSystemService(Context.APP_OPS_SERVICE) as AppOpsManager
+        val m = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) ops.unsafeCheckOpNoThrow(AppOpsManager.OPSTR_GET_USAGE_STATS, Process.myUid(), context.packageName)
+        else @Suppress("DEPRECATION") ops.checkOpNoThrow(AppOpsManager.OPSTR_GET_USAGE_STATS, Process.myUid(), context.packageName)
+        m == AppOpsManager.MODE_ALLOWED
     }
 
-    val items = listOf(
-        Triple("Root (SU / KernelSU)", "Unlocks ${TileCatalog.hiddenRootCount()} root tiles (auto-hidden if denied)", hasRoot to null),
-        Triple("Accessibility Service", "App Lock, Instant Lock, Screenshot, Split, Clear Recents", a11yGranted to Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)),
-        Triple("Display Over Other Apps", "Blackout Pocket, Extra Dim, Amber Filter, Overlays", overlayGranted to Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:${context.packageName}"))),
-        Triple("Modify System Settings", "Direct Brightness, Timeout, Rotation, Haptics", writeGranted to Intent(Settings.ACTION_MANAGE_WRITE_SETTINGS, Uri.parse("package:${context.packageName}"))),
-        Triple("Do Not Disturb Policy", "Direct Sound Profile, Mute Except Alarms, Study Mode", dndGranted to Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS)),
-        Triple("Usage Access", "App Lock & Foreground App Detection", usageGranted to Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS))
+    val list = listOf(
+        Triple("Accessibility Service", "App Lock, Instant Lock, Screenshot, Split, Clear Recents", a11y to Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)),
+        Triple("Modify System Settings", "Direct Brightness, Timeout, Rotation, Haptics", write to Intent(Settings.ACTION_MANAGE_WRITE_SETTINGS, Uri.parse("package:${context.packageName}"))),
+        Triple("Do Not Disturb Policy", "Sound Profile, Study Mode, Meeting, Exam, Total Silence", dnd to Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS)),
+        Triple("Usage Access", "Foreground App Detection for App Lock", usage to Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS))
     )
-    val readyCount = items.count { it.third.first }
 
-    Column(modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 12.dp)) {
-        SubPageHeader(title = "Permission Center", subtitle = "$readyCount / ${items.size} permissions active", onBack = onBack)
+    Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
+        PageHeader(title = "Permissions", meta = "${list.count { it.third.first }} / ${list.size} GRANTED (ZERO ROOT, ZERO OVERLAY)", onBack = onBack)
         LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            items(items) { (title, desc, stateAndIntent) ->
-                val granted = stateAndIntent.first
-                val intent = stateAndIntent.second
-                Surface(
-                    shape = RoundedCornerShape(14.dp),
-                    color = MaterialTheme.colorScheme.surface,
-                    border = BorderStroke(1.dp, if (granted) MaterialTheme.colorScheme.primary.copy(alpha = 0.35f) else Color.Transparent),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
+            items(list) { (t, d, pair) ->
+                Surface(shape = RoundedCornerShape(14.dp), color = MaterialTheme.colorScheme.surface, border = BorderStroke(1.dp, if (pair.first) MaterialTheme.colorScheme.primary.copy(alpha = 0.5f) else MaterialTheme.colorScheme.outline), modifier = Modifier.fillMaxWidth()) {
                     Row(modifier = Modifier.padding(14.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                         Column(modifier = Modifier.weight(1f)) {
-                            Text(title, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
-                            Text(desc, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f))
+                            Text(t, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                            Text(d, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f))
                         }
                         Spacer(Modifier.width(8.dp))
-                        if (granted) {
-                            Text("READY", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-                        } else if (intent != null) {
-                            Button(onClick = { intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK); runCatching { context.startActivity(intent) } }) { Text("Grant") }
-                        } else {
-                            Button(onClick = onRequestSu, enabled = !checkingRoot) { Text(if (checkingRoot) "Asking..." else "Ask SU") }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun HubSettingsPage(hasRoot: Boolean, darkTheme: Boolean, onToggleTheme: () -> Unit, onBack: () -> Unit) {
-    val context = LocalContext.current
-    val notes = remember { TilePrefs.getQuickNotes(context) }
-
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = 16.dp, vertical = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        SubPageHeader(title = "App Hub & Settings", subtitle = "External Hub API, Theme & Quick Notes", onBack = onBack)
-
-        Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surface, modifier = Modifier.fillMaxWidth()) {
-            Row(modifier = Modifier.padding(16.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                Column {
-                    Text("Dark Mode", fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
-                    Text("Switch between Obsidian Dark and Crisp Light", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f))
-                }
-                Switch(checked = darkTheme, onCheckedChange = { onToggleTheme() })
-            }
-        }
-
-        Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surface, modifier = Modifier.fillMaxWidth()) {
-            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text("App Hub Endpoints", fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
-                Text("Provider: content://com.krishna.tiledeck.hub/tiles", fontSize = 11.5.sp, fontFamily = FontFamily.Monospace, color = MaterialTheme.colorScheme.primary)
-                Text("Trigger: com.krishna.tiledeck.ACTION_TRIGGER_TILE", fontSize = 11.5.sp, fontFamily = FontFamily.Monospace, color = MaterialTheme.colorScheme.primary)
-                Text("Deep Links: tiledeck://hub | tiledeck://applock | tiledeck://permissions", fontSize = 11.5.sp, fontFamily = FontFamily.Monospace, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f))
-                Text(
-                    if (hasRoot) "Exposing all 65 direct tiles to external App Hubs."
-                    else "Exposing 47 non-root tiles (18 root tiles hidden until SU granted).",
-                    fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
-                )
-            }
-        }
-
-        Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surface, modifier = Modifier.fillMaxWidth()) {
-            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text("Saved Quick Notes (${notes.size})", fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
-                if (notes.isEmpty()) {
-                    Text("Tap the Quick Note tile in your notification shade to capture notes here.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f))
-                } else {
-                    notes.take(10).forEach { n ->
-                        Text("- $n", fontSize = 12.5.sp)
+                        if (pair.first) Text("READY", fontSize = 11.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                        else Button(onClick = { pair.second.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK); runCatching { context.startActivity(pair.second) }; tick++ }) { Text("Grant") }
                     }
                 }
             }
