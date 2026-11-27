@@ -1,4 +1,4 @@
-# TileDeck v4.0.0
+# TileDeck v6.0.0
 
 Direct-execution Android Quick Settings utility hub with automatic SU (KernelSU/Magisk) detection and auto-hiding of root-only tiles.
 
