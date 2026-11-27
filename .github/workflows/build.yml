@@ -1,4 +1,4 @@
-name: Build TileDeck v3 APK
+name: Build TileDeck v4 APK
 
 on:
   push:
@@ -22,5 +22,5 @@ jobs:
       - name: Upload APK Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: TileDeck-v3.0.0-APKs
+          name: TileDeck-v4.0.0-APKs
           path: app/build/outputs/apk/**/*.apk

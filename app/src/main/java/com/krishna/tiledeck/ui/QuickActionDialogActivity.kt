@@ -100,7 +100,7 @@ private fun QuickCalcDialog(onClose: () -> Unit) {
 
 private fun evalSimple(input: String): String {
     val clean = input.replace(" ", "")
-    val match = Regex("^(-?\d+(?:\.\d+)?)([+\-*/])(-?\d+(?:\.\d+)?)$").find(clean) ?: return "..."
+    val match = Regex("""^(-?\d+(?:\.\d+)?)([+\-*/])(-?\d+(?:\.\d+)?)$""").find(clean) ?: return "..."
     val a = match.groupValues[1].toDoubleOrNull() ?: return "..."
     val b = match.groupValues[3].toDoubleOrNull() ?: return "..."
     val v = when (match.groupValues[2]) {

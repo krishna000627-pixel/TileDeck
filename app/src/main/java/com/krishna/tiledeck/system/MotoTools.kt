@@ -102,7 +102,7 @@ object MotoTools {
     fun switchUserProfile(context: Context): Pair<Boolean, String> {
         val (ok, out) = runRoot("pm list users")
         if (!ok) return false to "Need Root"
-        val userIds = Regex("UserInfo\{(\d+):").findAll(out).map { it.groupValues[1].toInt() }.toList()
+        val userIds = Regex("""UserInfo\{(\d+):""").findAll(out).map { it.groupValues[1].toInt() }.toList()
         if (userIds.size < 2) return false to "1 User Only"
         val idx = (TilePrefs.getCounter(context, "switch_user_profile") + 1) % userIds.size
         TilePrefs.setCounter(context, "switch_user_profile", idx)

@@ -133,7 +133,7 @@ private fun TileDeckRoot(initialTab: Int, darkTheme: Boolean, onToggleTheme: () 
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Column {
-                    Text("TileDeck v3.0.0", fontSize = 21.sp, fontWeight = FontWeight.Bold)
+                    Text("TileDeck v4.0.0", fontSize = 21.sp, fontWeight = FontWeight.Bold)
                     Text(
                         if (checkingRoot) "Checking SU access..."
                         else if (hasRoot) "$visibleCount Direct Tiles | SU Granted"
