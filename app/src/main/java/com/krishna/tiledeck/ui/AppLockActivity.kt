@@ -298,14 +298,21 @@ class AppLockActivity : FragmentActivity() {
         runCatching { prompt.authenticate(info) }
     }
 
+    override fun onDestroy() {
+        TileDeckAccessibilityService.isLockScreenShowing = false
+        super.onDestroy()
+    }
+
     private fun unlockSuccess() {
         if (!isPreviewMode) {
             TileDeckAccessibilityService.unlockedSessionPkg = targetPkg
         }
+        TileDeckAccessibilityService.isLockScreenShowing = false
         finish()
     }
 
     private fun exitToHome() {
+        TileDeckAccessibilityService.isLockScreenShowing = false
         startActivity(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
         finish()
     }

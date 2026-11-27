@@ -54,7 +54,9 @@
             android:name=".ui.AppLockActivity"
             android:exported="false"
             android:excludeFromRecents="true"
-            android:launchMode="singleTop"
+            android:launchMode="singleInstance"
+            android:noHistory="true"
+            android:taskAffinity="com.krishna.tiledeck.lockscreen"
             android:theme="@style/Theme.TileDeck" />
 
         <service

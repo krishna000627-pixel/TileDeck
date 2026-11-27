@@ -45,24 +45,34 @@ class TileDeckAccessibilityService : AccessibilityService() {
             }
             if (!TilePrefs.isAppLockArmed(applicationContext)) return
 
+            val isIme = pkg.contains("inputmethod", true) || pkg.contains("keyboard", true) || pkg.contains("gboard", true) || pkg.contains("swiftkey", true)
             val locked = TilePrefs.getLockedPackages(applicationContext)
             when {
                 // Returning to currently unlocked app -> cancel any pending 3s relock timer
                 pkg == unlockedSessionPkg -> {
                     cancelRelockTimer()
                 }
-                // Transient file/photo picker or system dialog -> keep current unlock alive
-                pkg in transientSystemPackages || pkg == packageName -> {
-                    // Do not clear unlockedSessionPkg while user is picking a file or dialog
+                // Transient file/photo picker, keyboard, or TileDeck itself -> keep current unlock alive
+                pkg in transientSystemPackages || isIme || pkg == packageName -> {
+                    // Do not clear unlockedSessionPkg
                 }
-                // Entered a locked app that is not unlocked -> launch lock screen
+                // Entered a locked app that is not unlocked -> launch isolated lock screen (with debounce)
                 pkg in locked -> {
                     cancelRelockTimer()
-                    val i = Intent(applicationContext, AppLockActivity::class.java).apply {
-                        putExtra("target_pkg", pkg)
-                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION)
+                    val now = System.currentTimeMillis()
+                    if (!isLockScreenShowing && (now - lastLockLaunchMs) > 600L) {
+                        isLockScreenShowing = true
+                        lastLockLaunchMs = now
+                        val i = Intent(applicationContext, AppLockActivity::class.java).apply {
+                            putExtra("target_pkg", pkg)
+                            addFlags(
+                                Intent.FLAG_ACTIVITY_NEW_TASK or
+                                    Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS or
+                                    Intent.FLAG_ACTIVITY_NO_ANIMATION
+                            )
+                        }
+                        startActivity(i)
                     }
-                    startActivity(i)
                 }
                 // Left the unlocked app to another regular app -> wait 3 seconds before re-locking
                 unlockedSessionPkg != null -> {
@@ -132,5 +142,7 @@ class TileDeckAccessibilityService : AccessibilityService() {
         @Volatile var instance: TileDeckAccessibilityService? = null
         @Volatile var lastForegroundPackage: String? = null
         @Volatile var unlockedSessionPkg: String? = null
+        @Volatile var isLockScreenShowing: Boolean = false
+        @Volatile var lastLockLaunchMs: Long = 0L
     }
 }

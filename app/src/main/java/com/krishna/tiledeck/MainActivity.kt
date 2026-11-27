@@ -284,7 +284,7 @@ private fun DeckHomePage(
     ) {
         PageHeader(
             title = "TILEDECK",
-            meta = "v12.0 | 102 DIRECT NON-ROOT TILES",
+            meta = "v13.0 | 102 DIRECT NON-ROOT TILES",
             trailing = {
                 OutlinedButton(onClick = onToggleTheme, shape = RoundedCornerShape(10.dp), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)) {
                     Text(if (dark) "LIGHT" else "DARK", fontSize = 11.sp, fontFamily = FontFamily.Monospace)
@@ -499,10 +499,10 @@ private fun SelfTesterPage(onBack: () -> Unit) {
 
     fun copyFailedReport() {
         val text = if (failed.isEmpty()) {
-            "TileDeck v12.0 Self-Test: ALL ${results.size} tiles PASSED (0 failures)."
+            "TileDeck v13.0 Self-Test: ALL ${results.size} tiles PASSED (0 failures)."
         } else {
             buildString {
-                appendLine("TileDeck v12.0 Failed Tiles (${failed.size}/${results.size}):")
+                appendLine("TileDeck v13.0 Failed Tiles (${failed.size}/${results.size}):")
                 failed.forEach { rec ->
                     appendLine("- ${rec.spec.id} (${rec.spec.name} | ${rec.spec.permissionTier}): ${rec.result.diagnostic}")
                 }
