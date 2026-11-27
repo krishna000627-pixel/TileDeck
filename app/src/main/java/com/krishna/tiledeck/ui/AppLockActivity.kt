@@ -292,8 +292,8 @@ class AppLockActivity : FragmentActivity() {
         })
         val info = BiometricPrompt.PromptInfo.Builder()
             .setTitle("Unlock Protected App")
-            .setSubtitle("Verify with fingerprint or screen lock")
-            .setNegativeButtonText("Use PIN")
+            .setSubtitle("Verify with fingerprint or system lock")
+            .setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_WEAK or BiometricManager.Authenticators.DEVICE_CREDENTIAL)
             .build()
         runCatching { prompt.authenticate(info) }
     }

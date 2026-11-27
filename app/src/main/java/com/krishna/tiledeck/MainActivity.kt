@@ -284,7 +284,7 @@ private fun DeckHomePage(
     ) {
         PageHeader(
             title = "TILEDECK",
-            meta = "v11.0 | 102 DIRECT NON-ROOT TILES",
+            meta = "v12.0 | 102 DIRECT NON-ROOT TILES",
             trailing = {
                 OutlinedButton(onClick = onToggleTheme, shape = RoundedCornerShape(10.dp), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)) {
                     Text(if (dark) "LIGHT" else "DARK", fontSize = 11.sp, fontFamily = FontFamily.Monospace)
@@ -499,10 +499,10 @@ private fun SelfTesterPage(onBack: () -> Unit) {
 
     fun copyFailedReport() {
         val text = if (failed.isEmpty()) {
-            "TileDeck v11.0 Self-Test: ALL ${results.size} tiles PASSED (0 failures)."
+            "TileDeck v12.0 Self-Test: ALL ${results.size} tiles PASSED (0 failures)."
         } else {
             buildString {
-                appendLine("TileDeck v11.0 Failed Tiles (${failed.size}/${results.size}):")
+                appendLine("TileDeck v12.0 Failed Tiles (${failed.size}/${results.size}):")
                 failed.forEach { rec ->
                     appendLine("- ${rec.spec.id} (${rec.spec.name} | ${rec.spec.permissionTier}): ${rec.result.diagnostic}")
                 }
@@ -565,12 +565,87 @@ private fun SelfTesterPage(onBack: () -> Unit) {
 @Composable
 private fun AppLockPage(onBack: () -> Unit) {
     val context = LocalContext.current
-    var subTab by remember { mutableIntStateOf(0) } // 0=Apps, 1=100 Features, 2=Intruder Log
+    var vaultUnlocked by remember { mutableStateOf(false) }
+    var gateInput by remember { mutableStateOf("") }
+    var gateError by remember { mutableStateOf(false) }
+
+    if (!vaultUnlocked) {
+        val currentPin = remember { TilePrefs.getAppLockPin(context) }
+        Column(
+            modifier = Modifier.fillMaxSize().padding(24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            Text("APP LOCK SETTINGS", fontSize = 11.sp, fontFamily = FontFamily.Monospace, color = MaterialTheme.colorScheme.primary)
+            Spacer(Modifier.height(6.dp))
+            Text("Enter PIN to Continue", fontSize = 22.sp, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(18.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                repeat(currentPin.length.coerceAtLeast(4)) { i ->
+                    Box(
+                        modifier = Modifier.size(12.dp).clip(CircleShape).background(
+                            when {
+                                gateError -> Color(0xFFEF4444)
+                                i < gateInput.length -> MaterialTheme.colorScheme.primary
+                                else -> MaterialTheme.colorScheme.outline
+                            }
+                        )
+                    )
+                }
+            }
+            if (gateError) {
+                Spacer(Modifier.height(8.dp))
+                Text("Incorrect PIN", fontSize = 11.5.sp, fontFamily = FontFamily.Monospace, color = Color(0xFFEF4444))
+            }
+            Spacer(Modifier.height(22.dp))
+            listOf(listOf("1","2","3"), listOf("4","5","6"), listOf("7","8","9"), listOf("C","0","OK")).forEach { row ->
+                Row(horizontalArrangement = Arrangement.spacedBy(16.dp), modifier = Modifier.padding(vertical = 6.dp)) {
+                    row.forEach { k ->
+                        Surface(
+                            shape = CircleShape,
+                            color = MaterialTheme.colorScheme.surface,
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+                            modifier = Modifier.size(64.dp).clickable {
+                                gateError = false
+                                when (k) {
+                                    "C" -> gateInput = ""
+                                    "OK" -> if (gateInput == currentPin) vaultUnlocked = true else { gateError = true; gateInput = "" }
+                                    else -> if (gateInput.length < 8) {
+                                        gateInput += k
+                                        if (gateInput == currentPin) vaultUnlocked = true
+                                        else if (gateInput.length >= currentPin.length) { gateError = true; gateInput = "" }
+                                    }
+                                }
+                            }
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Text(k, fontSize = 18.sp, fontWeight = FontWeight.Medium)
+                            }
+                        }
+                    }
+                }
+            }
+            Spacer(Modifier.height(12.dp))
+            TextButton(onClick = onBack) { Text("Back") }
+        }
+        return
+    }
+
+    var subTab by remember { mutableIntStateOf(0) } // 0=Apps, 1=Security (System-style PIN), 2=100 Features, 3=Intruders
     var q by remember { mutableStateOf("") }
     var featCat by remember { mutableStateOf("All") }
-    var pin by remember { mutableStateOf(TilePrefs.getAppLockPin(context)) }
     var armed by remember { mutableStateOf(TilePrefs.isAppLockArmed(context)) }
     var tick by remember { mutableIntStateOf(0) }
+
+    // System-lock-style 3-step Change PIN wizard state
+    var pinStep by remember { mutableIntStateOf(0) } // 0=Verify Current, 1=Enter New, 2=Confirm New
+    var stepInput by remember { mutableStateOf("") }
+    var pendingNewPin by remember { mutableStateOf("") }
+    var stepMsg by remember { mutableStateOf("Verify your current PIN to change passcode.") }
+    var stepIsError by remember { mutableStateOf(false) }
+
+    var duressInput by remember { mutableStateOf(AppLockFeatures.getDuressPin(context)) }
+    var hintInput by remember { mutableStateOf(AppLockFeatures.getHint(context)) }
 
     val apps = remember {
         val pm = context.packageManager
@@ -584,47 +659,36 @@ private fun AppLockPage(onBack: () -> Unit) {
     val enabledFeatCount = remember(tick) { AppLockFeatures.enabledCount(context) }
     val logs = remember(tick) { AppLockFeatures.getIntruderLogs(context) }
 
-    fun launchPreview(cover: String? = null) {
-        val i = Intent(context, AppLockActivity::class.java).apply {
-            putExtra("target_pkg", context.packageName)
-            putExtra("preview_mode", true)
-            if (cover != null) putExtra("force_cover", cover)
-        }
-        context.startActivity(i)
-    }
-
     Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
         PageHeader(
             title = "App Lock Vault",
-            meta = "$enabledFeatCount / 100 POWER FEATURES | ${AppLockFeatures.activeThemeName(context)}",
-            onBack = onBack
+            meta = "$enabledFeatCount / 100 FEATURES | 3S RELOCK GRACE",
+            onBack = onBack,
+            trailing = {
+                TextButton(onClick = { vaultUnlocked = false; gateInput = "" }) {
+                    Text("Lock", fontSize = 11.5.sp, fontFamily = FontFamily.Monospace)
+                }
+            }
         )
 
-        // Sub-navigation pills
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             FilterChip(selected = subTab == 0, onClick = { subTab = 0 }, label = { Text("Apps", fontSize = 11.5.sp) })
-            FilterChip(selected = subTab == 1, onClick = { subTab = 1 }, label = { Text("100 Features", fontSize = 11.5.sp) })
-            FilterChip(selected = subTab == 2, onClick = { subTab = 2 }, label = { Text("Intruders (${logs.size})", fontSize = 11.5.sp) })
+            FilterChip(selected = subTab == 1, onClick = { subTab = 1 }, label = { Text("Passcode", fontSize = 11.5.sp) })
+            FilterChip(selected = subTab == 2, onClick = { subTab = 2 }, label = { Text("100 Features", fontSize = 11.5.sp) })
+            FilterChip(selected = subTab == 3, onClick = { subTab = 3 }, label = { Text("Intruders (${logs.size})", fontSize = 11.5.sp) })
         }
         Spacer(Modifier.height(8.dp))
 
         when (subTab) {
             0 -> {
+                // Clean normal view — NO test buttons cluttering the screen
                 Surface(shape = RoundedCornerShape(14.dp), color = MaterialTheme.colorScheme.surface, border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline), modifier = Modifier.fillMaxWidth()) {
-                    Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                            Text("Arm App Lock Shield", fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
-                            Switch(checked = armed, onCheckedChange = { armed = it; TilePrefs.setAppLockArmed(context, it) })
+                    Row(modifier = Modifier.padding(14.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("App Lock Shield", fontSize = 14.5.sp, fontWeight = FontWeight.SemiBold)
+                            Text("3-second grace timer & file-picker safe", fontSize = 11.sp, fontFamily = FontFamily.Monospace, color = MaterialTheme.colorScheme.primary)
                         }
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                            OutlinedTextField(value = pin, onValueChange = { if (it.length <= 8 && it.all(Char::isDigit)) pin = it }, label = { Text("PIN") }, singleLine = true, modifier = Modifier.weight(1f), shape = RoundedCornerShape(10.dp))
-                            Button(onClick = { TilePrefs.setAppLockPin(context, pin); Toast.makeText(context, "PIN saved", Toast.LENGTH_SHORT).show() }) { Text("Save") }
-                        }
-                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
-                            OutlinedButton(onClick = { launchPreview(null) }, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)) { Text("Test Lock UI", fontSize = 11.sp) }
-                            OutlinedButton(onClick = { launchPreview("crash") }, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)) { Text("Test Crash Decoy", fontSize = 11.sp) }
-                            OutlinedButton(onClick = { launchPreview("calc") }, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)) { Text("Test Calc Disguise", fontSize = 11.sp) }
-                        }
+                        Switch(checked = armed, onCheckedChange = { armed = it; TilePrefs.setAppLockArmed(context, it) })
                     }
                 }
                 Spacer(Modifier.height(8.dp))
@@ -651,15 +715,89 @@ private fun AppLockPage(onBack: () -> Unit) {
                 }
             }
             1 -> {
+                // System-Lock-style Passcode & Security Settings
+                Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Surface(shape = RoundedCornerShape(14.dp), color = MaterialTheme.colorScheme.surface, border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline), modifier = Modifier.fillMaxWidth()) {
+                        Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text(
+                                when (pinStep) {
+                                    0 -> "Step 1 of 3: Verify Current PIN"
+                                    1 -> "Step 2 of 3: Enter New PIN (4-8 digits)"
+                                    else -> "Step 3 of 3: Confirm New PIN"
+                                },
+                                fontSize = 14.sp, fontWeight = FontWeight.SemiBold
+                            )
+                            Text(stepMsg, fontSize = 11.5.sp, color = if (stepIsError) Color(0xFFEF4444) else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f))
+                            OutlinedTextField(
+                                value = stepInput,
+                                onValueChange = { if (it.length <= 8 && it.all(Char::isDigit)) { stepInput = it; stepIsError = false } },
+                                label = { Text(when (pinStep) { 0 -> "Current PIN"; 1 -> "New PIN"; else -> "Confirm New PIN" }) },
+                                singleLine = true, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(10.dp)
+                            )
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Button(onClick = {
+                                    val saved = TilePrefs.getAppLockPin(context)
+                                    when (pinStep) {
+                                        0 -> if (stepInput == saved) {
+                                            pinStep = 1; stepInput = ""; stepIsError = false
+                                            stepMsg = "Verified. Enter your new 4 to 8 digit PIN."
+                                        } else {
+                                            stepIsError = true; stepMsg = "Current PIN does not match."
+                                        }
+                                        1 -> if (stepInput.length >= 4) {
+                                            pendingNewPin = stepInput; pinStep = 2; stepInput = ""; stepIsError = false
+                                            stepMsg = "Re-enter your new PIN to confirm."
+                                        } else {
+                                            stepIsError = true; stepMsg = "PIN must be at least 4 digits."
+                                        }
+                                        else -> if (stepInput == pendingNewPin) {
+                                            TilePrefs.setAppLockPin(context, pendingNewPin)
+                                            pinStep = 0; stepInput = ""; pendingNewPin = ""; stepIsError = false
+                                            stepMsg = "PIN updated successfully."
+                                            Toast.makeText(context, "PIN changed", Toast.LENGTH_SHORT).show()
+                                        } else {
+                                            stepIsError = true; stepInput = ""
+                                            stepMsg = "PINs did not match. Try confirming again."
+                                        }
+                                    }
+                                }) { Text(if (pinStep == 2) "Confirm & Save" else "Next") }
+                                if (pinStep > 0) {
+                                    OutlinedButton(onClick = { pinStep = 0; stepInput = ""; pendingNewPin = ""; stepIsError = false; stepMsg = "Cancelled." }) { Text("Cancel") }
+                                }
+                            }
+                        }
+                    }
+
+                    Surface(shape = RoundedCornerShape(14.dp), color = MaterialTheme.colorScheme.surface, border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline), modifier = Modifier.fillMaxWidth()) {
+                        Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text("Duress / Panic PIN", fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                            Text("Entering this PIN silently exits to Home and logs a HIGH ALERT.", fontSize = 11.5.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f))
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                                OutlinedTextField(value = duressInput, onValueChange = { if (it.length <= 8 && it.all(Char::isDigit)) duressInput = it }, label = { Text("Panic PIN") }, singleLine = true, modifier = Modifier.weight(1f), shape = RoundedCornerShape(10.dp))
+                                Button(onClick = { AppLockFeatures.setDuressPin(context, duressInput); Toast.makeText(context, "Panic PIN saved", Toast.LENGTH_SHORT).show() }) { Text("Save") }
+                            }
+                        }
+                    }
+
+                    Surface(shape = RoundedCornerShape(14.dp), color = MaterialTheme.colorScheme.surface, border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline), modifier = Modifier.fillMaxWidth()) {
+                        Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text("Security Hint", fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                                OutlinedTextField(value = hintInput, onValueChange = { hintInput = it }, label = { Text("Optional Hint") }, singleLine = true, modifier = Modifier.weight(1f), shape = RoundedCornerShape(10.dp))
+                                Button(onClick = { AppLockFeatures.setHint(context, hintInput); Toast.makeText(context, "Hint saved", Toast.LENGTH_SHORT).show() }) { Text("Save") }
+                            }
+                        }
+                    }
+                }
+            }
+            2 -> {
                 Row(modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     (listOf("All") + AppLockFeatures.categories).forEach { cat ->
                         FilterChip(selected = featCat == cat, onClick = { featCat = cat }, label = { Text(cat, fontSize = 11.sp) })
                     }
                 }
                 Spacer(Modifier.height(8.dp))
-                val shownFeats = remember(featCat, tick) {
-                    AppLockFeatures.all.filter { featCat == "All" || it.category == featCat }
-                }
+                val shownFeats = remember(featCat, tick) { AppLockFeatures.all.filter { featCat == "All" || it.category == featCat } }
                 LazyColumn(verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxSize()) {
                     items(shownFeats, key = { it.key }) { feat ->
                         val on = remember(tick) { AppLockFeatures.isEnabled(context, feat.key) }

@@ -13,6 +13,23 @@ import com.krishna.tiledeck.ui.AppLockActivity
 class TileDeckAccessibilityService : AccessibilityService() {
 
     private val handler = Handler(Looper.getMainLooper())
+    private var pendingRelockRunnable: Runnable? = null
+
+    private val transientSystemPackages = setOf(
+        "android",
+        "com.android.systemui",
+        "com.android.documentsui",
+        "com.google.android.documentsui",
+        "com.android.providers.media",
+        "com.android.providers.media.module",
+        "com.google.android.providers.media.module",
+        "com.android.permissioncontroller",
+        "com.google.android.permissioncontroller",
+        "com.android.intentresolver",
+        "com.google.android.gms",
+        "com.android.camera",
+        "com.motorola.camera3"
+    )
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -23,24 +40,56 @@ class TileDeckAccessibilityService : AccessibilityService() {
         if (event == null) return
         val pkg = event.packageName?.toString() ?: return
         if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
-            if (pkg != packageName && pkg != "com.android.systemui") lastForegroundPackage = pkg
-            if (TilePrefs.isAppLockArmed(applicationContext)) {
-                val locked = TilePrefs.getLockedPackages(applicationContext)
-                if (pkg in locked && pkg != unlockedSessionPkg) {
+            if (pkg != packageName && pkg !in transientSystemPackages) {
+                lastForegroundPackage = pkg
+            }
+            if (!TilePrefs.isAppLockArmed(applicationContext)) return
+
+            val locked = TilePrefs.getLockedPackages(applicationContext)
+            when {
+                // Returning to currently unlocked app -> cancel any pending 3s relock timer
+                pkg == unlockedSessionPkg -> {
+                    cancelRelockTimer()
+                }
+                // Transient file/photo picker or system dialog -> keep current unlock alive
+                pkg in transientSystemPackages || pkg == packageName -> {
+                    // Do not clear unlockedSessionPkg while user is picking a file or dialog
+                }
+                // Entered a locked app that is not unlocked -> launch lock screen
+                pkg in locked -> {
+                    cancelRelockTimer()
                     val i = Intent(applicationContext, AppLockActivity::class.java).apply {
                         putExtra("target_pkg", pkg)
                         addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION)
                     }
                     startActivity(i)
-                } else if (pkg !in locked && pkg != packageName && pkg != "com.android.systemui") {
-                    unlockedSessionPkg = null
+                }
+                // Left the unlocked app to another regular app -> wait 3 seconds before re-locking
+                unlockedSessionPkg != null -> {
+                    scheduleRelockAfter3s()
                 }
             }
         }
     }
 
+    private fun scheduleRelockAfter3s() {
+        cancelRelockTimer()
+        val task = Runnable { unlockedSessionPkg = null }
+        pendingRelockRunnable = task
+        handler.postDelayed(task, 3000L)
+    }
+
+    private fun cancelRelockTimer() {
+        pendingRelockRunnable?.let { handler.removeCallbacks(it) }
+        pendingRelockRunnable = null
+    }
+
     override fun onInterrupt() {}
-    override fun onDestroy() { super.onDestroy(); if (instance === this) instance = null }
+    override fun onDestroy() {
+        cancelRelockTimer()
+        super.onDestroy()
+        if (instance === this) instance = null
+    }
 
     fun lockScreenNow(): Boolean = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) performGlobalAction(GLOBAL_ACTION_LOCK_SCREEN) else false
     fun takeScreenshotNow(): Boolean = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) performGlobalAction(GLOBAL_ACTION_TAKE_SCREENSHOT) else false
