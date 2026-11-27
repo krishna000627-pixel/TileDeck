@@ -1,0 +1,12 @@
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:shortcutId="open_tile_hub"
+        android:enabled="true"
+        android:icon="@drawable/ic_tile_default"
+        android:shortcutShortLabel="@string/hub_title">
+        <intent
+            android:action="com.krishna.tiledeck.ACTION_OPEN_HUB"
+            android:targetPackage="com.krishna.tiledeck"
+            android:targetClass="com.krishna.tiledeck.MainActivity" />
+    </shortcut>
+</shortcuts>

@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">TileDeck</string>
+    <string name="hub_title">TileDeck Hub</string>
+    <string name="accessibility_desc">Enables TileDeck App Lock, Instant Lock, Screenshot, Split Screen, Last App Switch, and Clear All Recents directly from Quick Settings.</string>
+</resources>

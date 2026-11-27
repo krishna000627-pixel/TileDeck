@@ -1,0 +1,3 @@
+-keep class com.krishna.tiledeck.tiles.** { *; }
+-keep class com.krishna.tiledeck.hub.** { *; }
+-keep class com.krishna.tiledeck.accessibility.** { *; }
